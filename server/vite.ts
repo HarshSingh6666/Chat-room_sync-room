@@ -1,8 +1,13 @@
 import path from 'path';
+import fs from 'fs';
 import express, { Express, Request, Response, NextFunction } from 'express';
 
 export async function setupFrontendMiddleware(app: Express): Promise<void> {
-  if (process.env.NODE_ENV !== 'production') {
+  const clientDistPath = path.resolve(process.cwd(), 'dist');
+  const hasDist = fs.existsSync(path.join(clientDistPath, 'index.html'));
+
+  // Never load Vite dev compiler if dist/index.html is already built (saves ~350MB+ RAM on Render)
+  if (process.env.NODE_ENV === 'development' && !hasDist) {
     const { createServer: createViteServer } = await import('vite');
 
     const vite = await createViteServer({
@@ -14,11 +19,9 @@ export async function setupFrontendMiddleware(app: Express): Promise<void> {
 
     app.use(vite.middlewares);
   } else {
-    const clientDistPath = path.resolve(process.cwd(), 'dist');
-
     app.use(express.static(clientDistPath));
 
-    // Express 5 compatible SPA fallback; avoids app.get('*').
+    // Express compatible SPA fallback; avoids app.get('*').
     app.use((req: Request, res: Response, next: NextFunction) => {
       if (req.method !== 'GET' || req.path.startsWith('/api/')) {
         return next();
