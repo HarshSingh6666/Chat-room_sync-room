@@ -57,7 +57,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col justify-center items-center py-8 px-4 sm:px-6">
+    <div className="flex-1 flex flex-col justify-start md:justify-center items-center py-6 sm:py-8 px-4 sm:px-6 overflow-y-auto min-h-0 w-full pt-safe pb-safe">
       <div className="max-w-3xl w-full space-y-6">
         {/* User Welcome Card */}
         <div className="relative overflow-hidden bg-gradient-to-r from-indigo-950/60 via-slate-900/90 to-violet-950/40 border border-indigo-900/40 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-6">

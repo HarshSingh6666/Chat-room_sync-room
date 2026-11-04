@@ -46,7 +46,7 @@ export const LandingAuth: React.FC<LandingAuthProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col justify-center items-center py-8 px-4 sm:px-6">
+    <div className="flex-1 flex flex-col justify-start md:justify-center items-center py-6 sm:py-8 px-4 sm:px-6 overflow-y-auto min-h-0 w-full pt-safe pb-safe">
       <div className="max-w-4xl w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
         
         {/* Left Column: App Highlights */}

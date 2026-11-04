@@ -110,68 +110,68 @@ export const AiMeetingCopilotModal: React.FC<AiMeetingCopilotModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-5">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-3xl w-full h-[85vh] flex flex-col shadow-2xl relative overflow-hidden">
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-2 sm:p-5">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl max-w-3xl w-full max-h-[92dvh] h-full sm:h-[85vh] flex flex-col shadow-2xl relative overflow-hidden">
         {/* Header */}
-        <div className="px-5 py-4 border-b border-slate-800 bg-slate-950/80 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-pink-500 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
-              <Sparkles className="w-5 h-5" />
+        <div className="px-3 py-2.5 sm:px-5 sm:py-4 border-b border-slate-800 bg-slate-950/80 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-gradient-to-tr from-indigo-600 to-pink-500 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20 shrink-0">
+              <Sparkles className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-white">SyncRoom AI Copilot</h2>
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                  Powered by Gemini 2.5 Flash
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <h2 className="text-sm sm:text-base font-bold text-white truncate">SyncRoom AI Copilot</h2>
+                <span className="hidden xs:inline-block text-[9px] sm:text-[10px] font-semibold px-1.5 py-0.2 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shrink-0">
+                  Gemini 2.5
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="hidden sm:block text-xs text-slate-400 truncate">
                 Live meeting intelligence, summaries, Q&amp;A, and real-time translation
               </p>
             </div>
           </div>
 
-          <button onClick={onClose} className="text-slate-400 hover:text-white p-1.5">
-            <X className="w-5 h-5" />
+          <button onClick={onClose} className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition shrink-0" aria-label="Close modal">
+            <X className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex border-b border-slate-800 bg-slate-950/40 px-5 gap-2 shrink-0">
+        <div className="flex border-b border-slate-800 bg-slate-950/40 px-2 sm:px-5 gap-1 sm:gap-2 shrink-0 overflow-x-auto no-scrollbar">
           <button
             onClick={() => setActiveTab('summary')}
-            className={`py-3 px-3 text-xs font-semibold flex items-center gap-2 border-b-2 transition ${
+            className={`py-2 sm:py-3 px-2 sm:px-3 text-xs font-semibold flex items-center gap-1.5 sm:gap-2 border-b-2 transition whitespace-nowrap shrink-0 ${
               activeTab === 'summary'
                 ? 'border-indigo-500 text-indigo-400'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <FileText className="w-4 h-4" />
-            <span>AI Meeting Summary &amp; Action Items</span>
+            <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            <span><span className="hidden sm:inline">AI </span>Summary</span>
           </button>
 
           <button
             onClick={() => setActiveTab('ask')}
-            className={`py-3 px-3 text-xs font-semibold flex items-center gap-2 border-b-2 transition ${
+            className={`py-2 sm:py-3 px-2 sm:px-3 text-xs font-semibold flex items-center gap-1.5 sm:gap-2 border-b-2 transition whitespace-nowrap shrink-0 ${
               activeTab === 'ask'
                 ? 'border-indigo-500 text-indigo-400'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Bot className="w-4 h-4" />
-            <span>Ask AI Co-Host</span>
+            <Bot className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            <span><span className="hidden sm:inline">Ask </span>Q&amp;A</span>
           </button>
 
           <button
             onClick={() => setActiveTab('translate')}
-            className={`py-3 px-3 text-xs font-semibold flex items-center gap-2 border-b-2 transition ${
+            className={`py-2 sm:py-3 px-2 sm:px-3 text-xs font-semibold flex items-center gap-1.5 sm:gap-2 border-b-2 transition whitespace-nowrap shrink-0 ${
               activeTab === 'translate'
                 ? 'border-indigo-500 text-indigo-400'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Globe className="w-4 h-4" />
-            <span>AI Live Translator</span>
+            <Globe className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            <span>Translate</span>
           </button>
         </div>
 

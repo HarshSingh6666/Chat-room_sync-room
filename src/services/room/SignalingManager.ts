@@ -86,14 +86,28 @@ export class SignalingManager extends ChatManager {
 
     let active = true;
     let lastSignalTimestamp = Date.now() - 5000;
+    const seenSignalIds = new Set<string>();
+
+    const dispatchSignal = (signal: any, fromUserId: string, sigId?: string) => {
+      if (sigId) {
+        if (seenSignalIds.has(sigId)) return;
+        seenSignalIds.add(sigId);
+        if (seenSignalIds.size > 500) {
+          const first = seenSignalIds.values().next().value;
+          if (first) seenSignalIds.delete(first);
+        }
+      }
+      onSignal(signal, fromUserId);
+    };
 
     // Server polling
     const pollServerSignals = async () => {
       if (!active) return;
 
       try {
+        const querySince = Math.max(0, lastSignalTimestamp - 4000);
         const res = await fetch(
-          `/api/rooms/${roomId}/signals?since=${lastSignalTimestamp}&excludeUserId=${currentUserId}`
+          `/api/rooms/${roomId}/signals?since=${querySince}&excludeUserId=${currentUserId}`
         );
 
         if (res.ok) {
@@ -101,19 +115,16 @@ export class SignalingManager extends ChatManager {
 
           if (Array.isArray(data.signals)) {
             data.signals.forEach((s: any) => {
-
               if (s.timestamp > lastSignalTimestamp) {
                 lastSignalTimestamp = s.timestamp;
               }
 
-              if (
-                s.targetUserId &&
-                s.targetUserId !== currentUserId
-              ) {
+              if (s.targetUserId && s.targetUserId !== currentUserId) {
                 return;
               }
 
-              onSignal(s.signal, s.fromUserId);
+              const sigId = s.id || `${s.fromUserId}_${s.timestamp}_${s.signal?.type || ''}`;
+              dispatchSignal(s.signal, s.fromUserId, sigId);
             });
           }
         }
@@ -124,7 +135,7 @@ export class SignalingManager extends ChatManager {
 
     const pollInterval = setInterval(
       pollServerSignals,
-      600
+      300
     );
 
     // Firebase listener
@@ -160,9 +171,11 @@ export class SignalingManager extends ChatManager {
                 return;
               }
 
-              onSignal(
+              const sigId = data.id || `${data.fromUserId}_${data.timestamp}_${data.signal?.type || ''}`;
+              dispatchSignal(
                 data.signal,
-                data.fromUserId
+                data.fromUserId,
+                sigId
               );
             });
 

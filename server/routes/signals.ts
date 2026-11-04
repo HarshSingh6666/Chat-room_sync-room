@@ -3,6 +3,8 @@ import { findRoom, memorySignals } from '../store';
 
 export const signalsRouter = Router();
 
+let signalCounter = 0;
+
 // Get WebRTC signals for room
 signalsRouter.get('/:id/signals', (req: Request, res: Response) => {
   const room = findRoom(req.params.id);
@@ -13,7 +15,7 @@ signalsRouter.get('/:id/signals', (req: Request, res: Response) => {
 
   const signals = allSignals.filter(
     (signal) =>
-      signal.timestamp > since &&
+      signal.timestamp >= since &&
       (!excludeUserId || signal.fromUserId !== excludeUserId)
   );
 
@@ -38,19 +40,24 @@ signalsRouter.post('/:id/signals', (req: Request, res: Response) => {
   }
 
   const signals = memorySignals.get(room.id) || [];
+  const now = Date.now();
 
-  signals.push({
+  const newSignal = {
+    id: `sig_${now}_${++signalCounter}`,
     fromUserId,
     targetUserId,
     signal,
-    timestamp: timestamp || Date.now(),
-  });
+    timestamp: typeof timestamp === 'number' && timestamp > 0 ? timestamp : now,
+  };
 
-  if (signals.length > 100) {
-    signals.splice(0, signals.length - 100);
+  signals.push(newSignal);
+
+  // Keep recent 200 signals for reliable multi-party handshake
+  if (signals.length > 200) {
+    signals.splice(0, signals.length - 200);
   }
 
   memorySignals.set(room.id, signals);
 
-  return res.json({ success: true });
+  return res.json({ success: true, id: newSignal.id });
 });

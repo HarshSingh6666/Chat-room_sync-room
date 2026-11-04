@@ -254,12 +254,14 @@ export default function App() {
   };
 
   return (
-    <div className="h-screen bg-slate-950 text-slate-100 flex flex-col font-sans antialiased selection:bg-indigo-500 selection:text-white">
+    <div className="h-[100dvh] min-h-[100dvh] w-full bg-slate-950 text-slate-100 flex flex-col font-sans antialiased selection:bg-indigo-500 selection:text-white overflow-hidden">
 
-      <Navbar
-        user={currentUser}
-        onSignOut={handleSignOut}
-      />
+      {!currentRoom && (
+        <Navbar
+          user={currentUser}
+          onSignOut={handleSignOut}
+        />
+      )}
 
       {meetingEndedNotice && !currentRoom && (
         <div className="bg-rose-500/15 border-b border-rose-500/30 text-rose-200 px-4 py-3 text-sm flex items-center justify-between shadow-md shrink-0">

@@ -1,3 +1,4 @@
+
 /**
  * WebRTC Service for peer-to-peer audio/video streaming & fallback stream generation
  */
@@ -16,9 +17,44 @@ const ICE_SERVERS: RTCConfiguration = {
   ],
 };
 
+export function createSilentAudioTrack(): { track: MediaStreamTrack; stop: () => void } | null {
+  try {
+    const AudioCtxClass =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+
+    if (!AudioCtxClass) return null;
+
+    const audioCtx = new AudioCtxClass();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const dest = audioCtx.createMediaStreamDestination();
+
+    gain.gain.value = 0;
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start();
+
+    const track = dest.stream.getAudioTracks()[0];
+    if (!track) return null;
+
+    return {
+      track,
+      stop: () => {
+        track.stop();
+        if (audioCtx.state !== 'closed') {
+          audioCtx.close().catch(() => {});
+        }
+      },
+    };
+  } catch (err) {
+    console.warn('Silent audio creation failed:', err);
+    return null;
+  }
+}
+
 /**
  * Creates an animated canvas video stream + silent audio track
- * as a high-fidelity fallback when physical camera/mic is denied or unavailable.
  */
 export function createSyntheticStream(label: string = 'SyncRoom User'): {
   stream: MediaStream;
@@ -27,6 +63,7 @@ export function createSyntheticStream(label: string = 'SyncRoom User'): {
   const canvas = document.createElement('canvas');
   canvas.width = 640;
   canvas.height = 480;
+
   const ctx = canvas.getContext('2d')!;
 
   let animationFrameId: number;
@@ -34,20 +71,24 @@ export function createSyntheticStream(label: string = 'SyncRoom User'): {
 
   const render = () => {
     t += 0.04;
-    // Dark modern gradient background
-    const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+
+    const grad = ctx.createLinearGradient(
+      0, 0, canvas.width, canvas.height
+    );
+
     grad.addColorStop(0, '#0f172a');
     grad.addColorStop(0.5, '#1e1b4b');
     grad.addColorStop(1, '#0f172a');
+
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Glowing animated circular waves
     const cx = canvas.width / 2;
     const cy = canvas.height / 2 - 20;
 
     for (let r = 1; r <= 3; r++) {
       const radius = 60 + r * 28 + Math.sin(t + r) * 12;
+
       ctx.beginPath();
       ctx.arc(cx, cy, radius, 0, Math.PI * 2);
       ctx.strokeStyle = `rgba(99, 102, 241, ${0.35 - r * 0.08})`;
@@ -55,40 +96,49 @@ export function createSyntheticStream(label: string = 'SyncRoom User'): {
       ctx.stroke();
     }
 
-    // Avatar orb
-    const orbGrad = ctx.createRadialGradient(cx - 15, cy - 15, 10, cx, cy, 55);
+    const orbGrad = ctx.createRadialGradient(
+      cx - 15, cy - 15, 10, cx, cy, 55
+    );
+
     orbGrad.addColorStop(0, '#818cf8');
     orbGrad.addColorStop(1, '#4338ca');
+
     ctx.fillStyle = orbGrad;
     ctx.beginPath();
     ctx.arc(cx, cy, 50, 0, Math.PI * 2);
     ctx.fill();
 
-    // Initials in avatar
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 36px Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+
     const initials = label.slice(0, 2).toUpperCase() || 'SR';
     ctx.fillText(initials, cx, cy);
 
-    // Dynamic waveform at bottom
     ctx.fillStyle = 'rgba(129, 140, 248, 0.7)';
+
     const barWidth = 6;
     const gap = 4;
     const numBars = 24;
+
     const startX = cx - (numBars * (barWidth + gap)) / 2;
+
     for (let i = 0; i < numBars; i++) {
       const h = Math.max(6, Math.sin(t * 2 + i * 0.4) * 22 + 20);
       const bx = startX + i * (barWidth + gap);
       const by = canvas.height - 70 - h / 2;
+
       ctx.fillRect(bx, by, barWidth, h);
     }
 
-    // Label banner
     ctx.fillStyle = '#94a3b8';
     ctx.font = '16px Inter, sans-serif';
-    ctx.fillText(`${label} (Virtual Avatar Feed)`, cx, canvas.height - 35);
+    ctx.fillText(
+      `${label} (Virtual Avatar Feed)`,
+      cx,
+      canvas.height - 35
+    );
 
     animationFrameId = requestAnimationFrame(render);
   };
@@ -97,21 +147,31 @@ export function createSyntheticStream(label: string = 'SyncRoom User'): {
 
   const canvasStream = canvas.captureStream(30);
 
-  // Generate synthetic silent audio track
   let audioTrack: MediaStreamTrack | null = null;
   let audioCtx: AudioContext | null = null;
+
   try {
-    const AudioCtxClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const AudioCtxClass =
+      window.AudioContext ||
+      (window as unknown as {
+        webkitAudioContext: typeof AudioContext;
+      }).webkitAudioContext;
+
     if (AudioCtxClass) {
       audioCtx = new AudioCtxClass();
+
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-      gain.gain.value = 0; // Silent
-      osc.connect(gain);
       const dest = audioCtx.createMediaStreamDestination();
+
+      gain.gain.value = 0;
+
+      osc.connect(gain);
       gain.connect(dest);
       osc.start();
+
       audioTrack = dest.stream.getAudioTracks()[0];
+
       if (audioTrack) {
         canvasStream.addTrack(audioTrack);
       }
@@ -122,7 +182,9 @@ export function createSyntheticStream(label: string = 'SyncRoom User'): {
 
   const stop = () => {
     cancelAnimationFrame(animationFrameId);
+
     canvasStream.getTracks().forEach((track) => track.stop());
+
     if (audioCtx && audioCtx.state !== 'closed') {
       audioCtx.close().catch(() => {});
     }
@@ -133,12 +195,20 @@ export function createSyntheticStream(label: string = 'SyncRoom User'): {
 
 export class WebRTCConnection {
   pc: RTCPeerConnection | null = null;
+
   localStream: MediaStream | null = null;
+
   remoteStream: MediaStream = new MediaStream();
+
   callbacks: WebRTCCallbacks;
+
   sendSignal: (signal: any) => void;
+
   isInitiator: boolean = false;
+
   pendingCandidates: RTCIceCandidateInit[] = [];
+
+  private isMakingOffer = false;
 
   constructor(
     sendSignal: (signal: any) => void,
@@ -151,28 +221,51 @@ export class WebRTCConnection {
   }
 
   init(localStream: MediaStream) {
+    if (this.pc) return;
+
     this.localStream = localStream;
     this.pc = new RTCPeerConnection(ICE_SERVERS);
 
-    // Add local tracks to peer connection
-    this.localStream.getTracks().forEach((track) => {
-      if (this.localStream && this.pc) {
-        this.pc.addTrack(track, this.localStream);
-      }
+    const pc = this.pc;
+
+    // Add local audio and video tracks
+    localStream.getTracks().forEach((track) => {
+      pc.addTrack(track, localStream);
     });
 
-    // Remote track listener
-    this.pc.ontrack = (event) => {
-      if (event.streams && event.streams[0]) {
-        this.callbacks.onRemoteStream(event.streams[0]);
+    // Handle remote audio and video tracks
+    pc.ontrack = (event) => {
+      const incomingStream = event.streams?.[0];
+
+      if (incomingStream) {
+        this.remoteStream = incomingStream;
       } else {
-        this.remoteStream.addTrack(event.track);
-        this.callbacks.onRemoteStream(this.remoteStream);
+        if (
+          !this.remoteStream.getTracks().some(
+            (track) => track.id === event.track.id
+          )
+        ) {
+          this.remoteStream.addTrack(event.track);
+        }
       }
+
+      // Re-wrap in fresh MediaStream so React detects newly added audio/video tracks
+      const stream = new MediaStream(this.remoteStream.getTracks());
+      this.callbacks.onRemoteStream(stream);
+
+      event.track.onunmute = () => {
+        const updated = new MediaStream(this.remoteStream.getTracks());
+        this.callbacks.onRemoteStream(updated);
+      };
+
+      event.track.onended = () => {
+        const updated = new MediaStream(this.remoteStream.getTracks());
+        this.callbacks.onRemoteStream(updated);
+      };
     };
 
-    // ICE Candidate generation
-    this.pc.onicecandidate = (event) => {
+    // ICE candidate generation
+    pc.onicecandidate = (event) => {
       if (event.candidate) {
         this.sendSignal({
           type: 'candidate',
@@ -181,64 +274,130 @@ export class WebRTCConnection {
       }
     };
 
-    // State changes
-    this.pc.onconnectionstatechange = () => {
-      if (this.pc) {
-        this.callbacks.onConnectionStateChange(this.pc.connectionState);
+    // Connection state monitoring
+    pc.onconnectionstatechange = () => {
+      if (this.pc === pc) {
+        this.callbacks.onConnectionStateChange(pc.connectionState);
       }
     };
 
-    this.pc.oniceconnectionstatechange = () => {
-      if (this.pc) {
-        this.callbacks.onIceConnectionStateChange(this.pc.iceConnectionState);
+    // ICE connection monitoring
+    pc.oniceconnectionstatechange = () => {
+      if (this.pc === pc) {
+        this.callbacks.onIceConnectionStateChange(
+          pc.iceConnectionState
+        );
       }
     };
   }
 
-  async startCall() {
-    if (!this.pc) return;
+  // Create and send offer
+  async startCall(): Promise<boolean> {
+    const pc = this.pc;
+
+    if (
+      !pc ||
+      !this.isInitiator ||
+      pc.signalingState !== 'stable' ||
+      this.isMakingOffer
+    ) {
+      return false;
+    }
+
     try {
-      const offer = await this.pc.createOffer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: true,
-      });
-      await this.pc.setLocalDescription(offer);
-      this.sendSignal({
-        type: 'offer',
-        sdp: offer,
-      });
+      this.isMakingOffer = true;
+
+      const offer = await pc.createOffer();
+
+      if (pc.signalingState !== 'stable') return false;
+
+      await pc.setLocalDescription(offer);
+
+      if (pc.localDescription) {
+        this.sendSignal({
+          type: 'offer',
+          sdp: pc.localDescription,
+        });
+        return true;
+      }
+      return false;
     } catch (err) {
       console.error('Error creating WebRTC offer:', err);
+      return false;
+    } finally {
+      this.isMakingOffer = false;
     }
   }
 
+  // Process queued ICE candidates
+  private async processPendingCandidates() {
+    const pc = this.pc;
+
+    if (!pc?.remoteDescription) return;
+
+    const candidates = [...this.pendingCandidates];
+    this.pendingCandidates = [];
+
+    for (const candidate of candidates) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.error('Error adding queued ICE candidate:', err);
+      }
+    }
+  }
+
+  // Handle incoming offer, answer and ICE signals
   async handleSignal(signal: any) {
-    if (!this.pc) return;
+    const pc = this.pc;
+
+    if (!pc || !signal) return;
 
     try {
       if (signal.type === 'offer') {
-        await this.pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-        // Process queued ice candidates
-        for (const candidate of this.pendingCandidates) {
-          await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+        if (pc.signalingState !== 'stable') {
+          console.warn(
+            'Ignoring offer because signaling state is:',
+            pc.signalingState
+          );
+          return;
         }
-        this.pendingCandidates = [];
 
-        const answer = await this.pc.createAnswer();
-        await this.pc.setLocalDescription(answer);
-        this.sendSignal({
-          type: 'answer',
-          sdp: answer,
-        });
-      } else if (signal.type === 'answer') {
-        await this.pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-        for (const candidate of this.pendingCandidates) {
-          await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+        await pc.setRemoteDescription(
+          new RTCSessionDescription(signal.sdp)
+        );
+
+        await this.processPendingCandidates();
+
+        const answer = await pc.createAnswer();
+
+        await pc.setLocalDescription(answer);
+
+        if (pc.localDescription) {
+          this.sendSignal({
+            type: 'answer',
+            sdp: pc.localDescription,
+          });
         }
-        this.pendingCandidates = [];
-      } else if (signal.type === 'candidate' && signal.candidate) {
-        if (this.pc.remoteDescription && this.pc.remoteDescription.type) {
-          await this.pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+      }
+
+      else if (signal.type === 'answer') {
+        if (pc.signalingState !== 'have-local-offer') {
+          return;
+        }
+
+        await pc.setRemoteDescription(
+          new RTCSessionDescription(signal.sdp)
+        );
+
+        await this.processPendingCandidates();
+      }
+
+      else if (signal.type === 'candidate' && signal.candidate) {
+        if (pc.remoteDescription) {
+          await pc.addIceCandidate(
+            new RTCIceCandidate(signal.candidate)
+          );
         } else {
           this.pendingCandidates.push(signal.candidate);
         }
@@ -248,19 +407,67 @@ export class WebRTCConnection {
     }
   }
 
-  replaceVideoTrack(newTrack: MediaStreamTrack) {
-    if (!this.pc) return;
-    const senders = this.pc.getSenders();
-    const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
-    if (videoSender) {
-      videoSender.replaceTrack(newTrack);
+  // Replace camera video with screen sharing video or vice versa
+  async replaceVideoTrack(newTrack: MediaStreamTrack) {
+    if (!this.pc || newTrack.kind !== 'video') return;
+
+    const videoSender = this.pc
+      .getSenders()
+      .find((sender) => sender.track?.kind === 'video');
+
+    if (!videoSender) {
+      console.warn('No video sender found for track replacement.');
+      return;
+    }
+
+    try {
+      await videoSender.replaceTrack(newTrack);
+    } catch (err) {
+      console.error('Error replacing video track:', err);
     }
   }
 
+  // Replace audio track when user grants mic permission or changes microphone
+  async replaceAudioTrack(newTrack: MediaStreamTrack) {
+    if (!this.pc || newTrack.kind !== 'audio') return;
+
+    const audioSender = this.pc
+      .getSenders()
+      .find((sender) => sender.track?.kind === 'audio');
+
+    if (!audioSender) {
+      console.warn('No audio sender found for track replacement.');
+      return;
+    }
+
+    try {
+      await audioSender.replaceTrack(newTrack);
+    } catch (err) {
+      console.error('Error replacing audio track:', err);
+    }
+  }
+
+  // Close peer connection
   close() {
     if (this.pc) {
+      this.pc.ontrack = null;
+      this.pc.onicecandidate = null;
+      this.pc.onconnectionstatechange = null;
+      this.pc.oniceconnectionstatechange = null;
+
       this.pc.close();
       this.pc = null;
     }
+
+    this.pendingCandidates = [];
+    this.isMakingOffer = false;
+
+    this.remoteStream.getTracks().forEach((track) => {
+      track.onended = null;
+      track.onunmute = null;
+    });
+
+    this.remoteStream = new MediaStream();
+    this.localStream = null;
   }
 }

@@ -6,7 +6,10 @@ import {
   ChatMessage,
 } from '../types';
 import { roomManager } from '../services/roomManager';
-import { createSyntheticStream } from '../services/webrtc';
+import {
+  createSyntheticStream,
+  createSilentAudioTrack,
+} from '../services/webrtc';
 import { useMultiWebRTC } from '../hooks/useMultiWebRTC';
 import { sounds } from '../utils/audioChime';
 import { fetchSmartReplies } from '../services/aiService';
@@ -41,10 +44,42 @@ export const RoomView: React.FC<RoomViewProps> = ({
   const [inputText, setInputText] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
   const [showParticipantsDrawer, setShowParticipantsDrawer] = useState(false);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
 
   const [layoutMode, setLayoutMode] = useState<
     'split' | 'video-focus' | 'chat-focus'
-  >('split');
+  >(() =>
+    typeof window !== 'undefined' && window.innerWidth >= 1024
+      ? 'split'
+      : 'video-focus'
+  );
+
+  const layoutModeRef = useRef(layoutMode);
+  useEffect(() => {
+    layoutModeRef.current = layoutMode;
+    if (layoutMode === 'chat-focus' || layoutMode === 'split') {
+      setUnreadChatCount(0);
+    }
+  }, [layoutMode]);
+
+  // Handle phone rotate or screen resize between mobile and desktop
+  useEffect(() => {
+    const handleResize = () => {
+      if (typeof window !== 'undefined') {
+        if (window.innerWidth < 1024 && layoutModeRef.current === 'split') {
+          setLayoutMode('video-focus');
+        }
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
+  }, []);
 
   // Media & WebRTC state
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
@@ -61,6 +96,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
     handleSignal,
     cleanup: cleanupWebRTC,
     replaceTrack,
+    replaceAudioTrack,
   } = useMultiWebRTC(
     room.id,
     currentUser,
@@ -68,6 +104,11 @@ export const RoomView: React.FC<RoomViewProps> = ({
     localStream,
     room.participants
   );
+
+  const handleSignalRef = useRef(handleSignal);
+  useEffect(() => {
+    handleSignalRef.current = handleSignal;
+  });
 
   // Emojis & Floating Reactions
   const [floatingReactions, setFloatingReactions] = useState<FloatingEmoji[]>([]);
@@ -95,52 +136,142 @@ export const RoomView: React.FC<RoomViewProps> = ({
   const localVideoRef = useRef<HTMLVideoElement>(null);
 
   const syntheticStreamStopperRef = useRef<(() => void) | null>(null);
+  const silentAudioStopperRef = useRef<(() => void) | null>(null);
   const originalCameraTrackRef = useRef<MediaStreamTrack | null>(null);
+  const hasRealVideoRef = useRef(false);
+  const hasRealAudioRef = useRef(false);
 
   // Initialize Media Streams and WebRTC
   useEffect(() => {
     let active = true;
 
     async function initMedia() {
-      let stream: MediaStream;
+      let videoTrack: MediaStreamTrack | null = null;
+      let audioTrack: MediaStreamTrack | null = null;
+      let silentAudioStopper: (() => void) | null = null;
+      let hasRealVideo = false;
+      let hasRealAudio = false;
 
+      // 1. Try requesting BOTH camera and microphone together
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
+        const streamBoth = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: true,
         });
-      } catch (err) {
+        videoTrack = streamBoth.getVideoTracks()[0] || null;
+        audioTrack = streamBoth.getAudioTracks()[0] || null;
+        hasRealVideo = !!videoTrack;
+        hasRealAudio = !!audioTrack;
+      } catch (errBoth) {
         console.warn(
-          'Real camera/mic denied or unavailable. Using synthetic stream:',
-          err
+          'Could not acquire both video and audio together, trying independently...',
+          errBoth
         );
 
-        const synth = createSyntheticStream(currentUser.name);
+        // 2. Try requesting CAMERA alone
+        try {
+          const streamVideo = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+          videoTrack = streamVideo.getVideoTracks()[0] || null;
+          hasRealVideo = !!videoTrack;
+        } catch (errVid) {
+          console.warn('Camera permission denied or unavailable:', errVid);
+        }
 
-        stream = synth.stream;
+        // 3. Try requesting MICROPHONE alone
+        try {
+          const streamAudio = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: false,
+          });
+          audioTrack = streamAudio.getAudioTracks()[0] || null;
+          hasRealAudio = !!audioTrack;
+        } catch (errAud) {
+          console.warn('Microphone permission denied or unavailable:', errAud);
+        }
+      }
+
+      hasRealVideoRef.current = hasRealVideo;
+      hasRealAudioRef.current = hasRealAudio;
+
+      let finalStream: MediaStream;
+
+      if (hasRealVideo && videoTrack) {
+        // User permitted CAMERA!
+        finalStream = new MediaStream();
+        finalStream.addTrack(videoTrack);
+
+        if (hasRealAudio && audioTrack) {
+          finalStream.addTrack(audioTrack);
+        } else {
+          // If mic was not permitted or unavailable, attach silent audio track for complete WebRTC handshake
+          const silentAudio = createSilentAudioTrack();
+          if (silentAudio) {
+            finalStream.addTrack(silentAudio.track);
+            silentAudioStopper = silentAudio.stop;
+            silentAudioStopperRef.current = silentAudio.stop;
+          }
+          setIsMicMuted(true);
+          roomManager.updateParticipantState(room.id, currentUser.id, {
+            isMuted: true,
+          });
+        }
+      } else if (hasRealAudio && audioTrack) {
+        // User permitted MIC alone: show avatar video + real mic
+        const synth = createSyntheticStream(currentUser.name);
         syntheticStreamStopperRef.current = synth.stop;
+
+        finalStream = new MediaStream();
+        const synthVideoTrack = synth.stream.getVideoTracks()[0];
+        if (synthVideoTrack) finalStream.addTrack(synthVideoTrack);
+        finalStream.addTrack(audioTrack);
+
+        setIsCameraOff(true);
+        roomManager.updateParticipantState(room.id, currentUser.id, {
+          isCameraOff: true,
+        });
+      } else {
+        // Neither was permitted: use full synthetic stream
+        const synth = createSyntheticStream(currentUser.name);
+        syntheticStreamStopperRef.current = synth.stop;
+        finalStream = synth.stream;
+
+        setIsCameraOff(true);
+        setIsMicMuted(true);
+        roomManager.updateParticipantState(room.id, currentUser.id, {
+          isCameraOff: true,
+          isMuted: true,
+        });
       }
 
       if (!active) {
-        stream.getTracks().forEach((track) => track.stop());
+        finalStream.getTracks().forEach((track) => track.stop());
 
         if (syntheticStreamStopperRef.current) {
           syntheticStreamStopperRef.current();
           syntheticStreamStopperRef.current = null;
         }
 
+        if (silentAudioStopper) {
+          silentAudioStopper();
+        }
+
         return;
       }
 
-      rawCameraStreamRef.current = stream;
+      rawCameraStreamRef.current = finalStream;
 
-      const processor = new VirtualBackgroundProcessor(stream);
-      bgProcessorRef.current = processor;
+      if (hasRealVideo) {
+        const processor = new VirtualBackgroundProcessor(finalStream);
+        bgProcessorRef.current = processor;
+      }
 
-      setLocalStream(stream);
+      setLocalStream(finalStream);
 
       if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
+        localVideoRef.current.srcObject = finalStream;
       }
     }
 
@@ -170,6 +301,9 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
         if (newMsg.senderId !== currentUser.id) {
           sounds.playMessageChime();
+          if (layoutModeRef.current === 'video-focus') {
+            setUnreadChatCount((prev) => prev + 1);
+          }
         }
       },
       (list) => {
@@ -187,7 +321,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
           return;
         }
 
-        handleSignal(signal, fromUserId);
+        handleSignalRef.current?.(signal, fromUserId);
       }
     );
 
@@ -224,6 +358,11 @@ export const RoomView: React.FC<RoomViewProps> = ({
       if (syntheticStreamStopperRef.current) {
         syntheticStreamStopperRef.current();
         syntheticStreamStopperRef.current = null;
+      }
+
+      if (silentAudioStopperRef.current) {
+        silentAudioStopperRef.current();
+        silentAudioStopperRef.current = null;
       }
 
       if (localStream) {
@@ -290,18 +429,43 @@ export const RoomView: React.FC<RoomViewProps> = ({
   };
 
   const handleSendReaction = async (emoji: string) => {
-  triggerFloatingReaction(emoji, currentUser.name);
-
-  await roomManager.sendReaction(
-    room.id,
-    currentUser.name,
-    emoji
-  );
-};
+    await roomManager.sendReaction(room.id, currentUser.name, emoji);
+  };
 
   // Toggle microphone
-  const handleToggleMic = () => {
+  const handleToggleMic = async () => {
     if (!localStream) return;
+
+    if (!hasRealAudioRef.current) {
+      try {
+        const streamAudio = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: false,
+        });
+        const realTrack = streamAudio.getAudioTracks()[0];
+        if (realTrack) {
+          hasRealAudioRef.current = true;
+          if (silentAudioStopperRef.current) {
+            silentAudioStopperRef.current();
+            silentAudioStopperRef.current = null;
+          }
+          const oldTrack = localStream.getAudioTracks()[0];
+          if (oldTrack) {
+            localStream.removeTrack(oldTrack);
+            oldTrack.stop();
+          }
+          localStream.addTrack(realTrack);
+          replaceAudioTrack(realTrack);
+          setIsMicMuted(false);
+          roomManager.updateParticipantState(room.id, currentUser.id, {
+            isMuted: false,
+          });
+          return;
+        }
+      } catch (err) {
+        console.warn('Microphone permission still denied or unavailable:', err);
+      }
+    }
 
     const audioTrack = localStream.getAudioTracks()[0];
 
@@ -322,7 +486,45 @@ export const RoomView: React.FC<RoomViewProps> = ({
   };
 
   // Toggle camera
-  const handleToggleCamera = () => {
+  const handleToggleCamera = async () => {
+    if (!hasRealVideoRef.current) {
+      try {
+        const streamVideo = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+        const realTrack = streamVideo.getVideoTracks()[0];
+        if (realTrack) {
+          hasRealVideoRef.current = true;
+          if (syntheticStreamStopperRef.current) {
+            syntheticStreamStopperRef.current();
+            syntheticStreamStopperRef.current = null;
+          }
+          const oldTrack = localStream?.getVideoTracks()[0];
+          if (oldTrack) {
+            localStream?.removeTrack(oldTrack);
+            oldTrack.stop();
+          }
+          localStream?.addTrack(realTrack);
+          rawCameraStreamRef.current = new MediaStream([realTrack]);
+          const processor = new VirtualBackgroundProcessor(rawCameraStreamRef.current);
+          bgProcessorRef.current = processor;
+
+          replaceTrack(realTrack);
+          if (localVideoRef.current) {
+            localVideoRef.current.srcObject = localStream;
+          }
+          setIsCameraOff(false);
+          roomManager.updateParticipantState(room.id, currentUser.id, {
+            isCameraOff: false,
+          });
+          return;
+        }
+      } catch (err) {
+        console.warn('Camera permission still denied or unavailable:', err);
+      }
+    }
+
     const newCameraOff = !isCameraOff;
 
     setIsCameraOff(newCameraOff);
@@ -538,7 +740,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
   
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 overflow-hidden p-3 sm:p-4 max-w-7xl w-full mx-auto relative">
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden p-1.5 sm:p-2.5 md:p-3.5 pt-safe pb-safe pl-safe pr-safe max-w-7xl w-full h-full mx-auto relative">
 
       <FloatingReactions reactions={floatingReactions} />
 
@@ -549,10 +751,16 @@ export const RoomView: React.FC<RoomViewProps> = ({
         copiedLink={copiedLink}
         connectionState={connectionState}
         participantCount={participantList.length}
+        unreadCount={unreadChatCount}
         layoutMode={layoutMode}
         onCopyLink={copyRoomShareLink}
         onOpenAiModal={() => setShowAiModal(true)}
-        onChangeLayout={setLayoutMode}
+        onChangeLayout={(mode) => {
+          setLayoutMode(mode);
+          if (mode === 'chat-focus' || mode === 'split') {
+            setUnreadChatCount(0);
+          }
+        }}
         onToggleParticipants={() =>
           setShowParticipantsDrawer(!showParticipantsDrawer)
         }
@@ -561,7 +769,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
       />
 
       {/* MAIN VIDEO + CHAT LAYOUT */}
-      <div className="flex-1 flex flex-col lg:grid lg:grid-cols-12 gap-3 min-h-0 overflow-hidden relative">
+      <div className="flex-1 flex flex-col lg:grid lg:grid-cols-12 gap-2 sm:gap-3 min-h-0 overflow-hidden relative h-full">
 
         {/* VIDEO SECTION */}
         <div
@@ -571,7 +779,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
               : layoutMode === 'video-focus'
               ? 'w-full lg:col-span-12'
               : 'w-full lg:col-span-7'
-          } flex flex-col bg-slate-900/60 border border-slate-800/80 rounded-2xl overflow-hidden relative shadow-lg flex-1 lg:flex-none lg:min-h-[520px] min-h-0`}
+          } flex flex-col bg-slate-900/60 border border-slate-800/80 rounded-xl sm:rounded-2xl overflow-hidden relative shadow-lg flex-1 min-h-0 h-full`}
         >
           <VideoGrid
             localVideoRef={localVideoRef}
@@ -618,7 +826,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
               : layoutMode === 'chat-focus'
               ? 'w-full lg:col-span-12'
               : 'w-full lg:col-span-5'
-          } flex flex-col flex-1 lg:flex-none lg:h-full min-h-0`}
+          } flex flex-col flex-1 lg:h-full min-h-0 h-full`}
         >
           <ChatBox
             messages={messages}
