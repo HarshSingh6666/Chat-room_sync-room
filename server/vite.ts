@@ -6,13 +6,19 @@ export async function setupFrontendMiddleware(app: Express): Promise<void> {
   const clientDistPath = path.resolve(process.cwd(), 'dist');
   const hasDist = fs.existsSync(path.join(clientDistPath, 'index.html'));
 
-  // Never load Vite dev compiler if dist/index.html is already built (saves ~350MB+ RAM on Render)
-  if (process.env.NODE_ENV === 'development' && !hasDist) {
+  // On Render or production, always serve built static files (uses ~30MB RAM).
+  const isProduction =
+    Boolean(process.env.RENDER) ||
+    process.env.NODE_ENV === 'production' ||
+    hasDist;
+
+  if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');
 
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
+        allowedHosts: true,
       },
       appType: 'spa',
     });
