@@ -1,0 +1,29 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Rooms collection
+    match /rooms/{roomId} {
+      allow read, write: if true;
+
+      // Realtime messages subcollection
+      match /messages/{messageId} {
+        allow read, write: if true;
+      }
+
+      // WebRTC signals subcollection
+      match /signals/{signalId} {
+        allow read, write: if true;
+      }
+
+      // Live reactions subcollection
+      match /reactions/{reactionId} {
+        allow read, write: if true;
+      }
+    }
+
+    // User profiles collection
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+  }
+}

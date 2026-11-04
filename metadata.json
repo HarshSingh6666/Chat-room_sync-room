@@ -1,0 +1,6 @@
+{
+  "name": "SyncRoom - Real-Time Room Chat & Video Call",
+  "description": "Production-ready WebRTC room video calling and real-time chat web app with Google Auth, Guest joining, and Admin controls.",
+  "requestFramePermissions": ["camera", "microphone", "display-capture"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

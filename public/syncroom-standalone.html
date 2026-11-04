@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SyncRoom - Real-Time Room Chat & Video Call with AI & Emojis</title>
+  <meta name="description" content="Single-file Room-based WebRTC video call, Screen Sharing, Floating Emojis, AI Meeting Notes, and Real-Time Chat." />
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <!-- Firebase SDK Compat v10 -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+  <style>
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
+    ::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.4); border-radius: 4px; }
+    @keyframes floatUp {
+      0% { opacity: 0; transform: translateY(0) scale(0.6); }
+      15% { opacity: 1; transform: translateY(-40px) scale(1.2) rotate(-5deg); }
+      50% { transform: translateY(-160px) scale(1.05) rotate(8deg); }
+      100% { opacity: 0; transform: translateY(-340px) scale(0.9) rotate(-10deg); }
+    }
+    .floating-bubble {
+      position: absolute;
+      animation: floatUp 2.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased selection:bg-indigo-500 selection:text-white">
+
+  <!-- HEADER -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-40 px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 text-white font-bold">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="font-bold text-base tracking-tight bg-gradient-to-r from-white via-slate-100 to-indigo-200 bg-clip-text text-transparent">SyncRoom</h1>
+          <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">AI + Screen Share + Emojis</span>
+        </div>
+        <p class="text-[11px] text-slate-400">WebRTC Video &amp; Real-Time Chat</p>
+      </div>
+    </div>
+
+    <!-- Status & User Info -->
+    <div class="flex items-center gap-3">
+      <div id="user-header-pill" class="hidden items-center gap-2 pl-2 border-l border-slate-800">
+        <img id="user-avatar" src="" class="w-7 h-7 rounded-full border border-indigo-500/30 object-cover" alt="User" />
+        <span id="user-name" class="text-xs font-medium text-slate-300 hidden sm:inline"></span>
+        <button id="btn-logout" class="text-xs text-rose-400 hover:text-rose-300 ml-1">Sign Out</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- FLOATING EMOJI CANVAS CONTAINER -->
+  <div id="emoji-stage" class="fixed inset-0 pointer-events-none z-50 overflow-hidden"></div>
+
+  <!-- MAIN APP CONTAINER -->
+  <main class="flex-1 flex flex-col p-4 max-w-7xl w-full mx-auto">
+
+    <!-- VIEW 1: LANDING & AUTH -->
+    <section id="view-landing" class="flex-1 flex flex-col items-center justify-center py-10">
+      <div class="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 backdrop-blur-xl shadow-2xl text-center">
+        <div class="w-16 h-16 mx-auto mb-5 rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-white shadow-xl shadow-indigo-500/30">
+          <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+        </div>
+
+        <h2 class="text-2xl font-black text-white mb-2">Welcome to SyncRoom</h2>
+        <p class="text-xs text-slate-400 mb-6">Real-time WebRTC meetings with Screen Sharing, Floating Emojis, and AI summaries.</p>
+
+        <button id="btn-google-login" class="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-100 text-slate-900 font-semibold py-3 px-4 rounded-xl shadow mb-4">
+          <svg class="w-4 h-4" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
+          Sign in with Google (Host)
+        </button>
+
+        <div class="relative py-2"><div class="border-t border-slate-800"></div></div>
+
+        <!-- Guest Join -->
+        <div class="mt-3 bg-slate-950 p-4 rounded-2xl border border-slate-800 text-left space-y-2">
+          <label class="block text-xs font-semibold text-slate-300">Join Directly as Guest:</label>
+          <input id="landing-guest-name" type="text" placeholder="Your Name (e.g. Jordan)" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white" />
+          <input id="landing-room-code" type="text" placeholder="Room Code (e.g. ABC-123)" class="w-full uppercase font-mono bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-indigo-300" />
+          <button id="btn-landing-guest-join" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-indigo-300 font-semibold text-xs rounded-xl">Enter Meeting</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 2: DASHBOARD -->
+    <section id="view-dashboard" class="hidden flex-1 flex flex-col justify-center items-center py-8">
+      <div class="max-w-xl w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 space-y-6 text-center">
+        <h2 id="dash-user-name" class="text-2xl font-bold text-white">Welcome</h2>
+        <button id="btn-dash-create-room" class="w-full py-4 bg-gradient-to-r from-indigo-600 to-violet-600 font-bold rounded-2xl text-white shadow-xl shadow-indigo-600/30">
+          + Create New Room (Admin)
+        </button>
+        <div class="bg-slate-950 p-4 rounded-2xl border border-slate-800">
+          <input id="dash-join-code-input" placeholder="Room Code (ABC-123)" class="w-full uppercase font-mono tracking-widest text-center text-lg p-3 rounded-xl bg-slate-900 border border-slate-800 text-indigo-300 mb-3" />
+          <button id="btn-dash-join-room" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs rounded-xl">Join Room</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 3: ROOM (Video Call + Chat + Screen Share + Emojis + AI) -->
+    <section id="view-room" class="hidden flex-1 flex flex-col h-[calc(100vh-5.5rem)]">
+      <!-- Room Bar -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl px-4 py-2.5 mb-3 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-slate-400 font-medium">Room:</span>
+          <span id="room-code-display" class="font-mono text-indigo-400 font-bold"></span>
+          <button id="btn-copy-link" class="text-xs bg-slate-800 hover:bg-slate-700 px-2 py-1 rounded">Copy Link</button>
+          <span id="role-badge" class="text-xs font-semibold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300">Host</span>
+          <button id="btn-open-ai-notes" class="text-xs bg-gradient-to-r from-indigo-600/40 to-pink-600/40 border border-indigo-500/40 text-indigo-200 px-2.5 py-1 rounded-lg font-bold flex items-center gap-1">
+            <span>✨ AI Notes</span>
+          </button>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btn-admin-end-room" class="hidden text-xs px-3 py-1.5 rounded-xl bg-rose-600/20 text-rose-300 border border-rose-500/30 font-semibold">End Room (Admin)</button>
+          <button id="btn-leave-room" class="text-xs px-3 py-1.5 rounded-xl bg-slate-800 text-slate-200">Leave</button>
+        </div>
+      </div>
+
+      <!-- Split Layout -->
+      <div class="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-3 overflow-hidden min-h-0">
+        <!-- Video Grid -->
+        <div class="lg:col-span-2 flex flex-col bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden relative">
+          <div class="flex-1 p-3 grid grid-cols-1 md:grid-cols-2 gap-3 min-h-0">
+            <!-- Local video tile -->
+            <div class="relative bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden flex items-center justify-center">
+              <video id="local-video" autoplay playsinline muted class="w-full h-full object-cover"></video>
+              <div id="local-avatar-fallback" class="hidden absolute inset-0 flex items-center justify-center bg-slate-950 text-indigo-400 text-2xl font-bold">U</div>
+              <div class="absolute bottom-2 left-2 bg-slate-900/85 px-2.5 py-1 rounded-lg text-xs text-white flex items-center gap-1.5">
+                <span id="local-label-name">You</span>
+                <span id="local-screen-badge" class="hidden text-[10px] bg-indigo-500/30 px-1.5 rounded text-indigo-300 font-bold">Screen</span>
+              </div>
+            </div>
+
+            <!-- Remote video tile -->
+            <div class="relative bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden flex items-center justify-center">
+              <video id="remote-video" autoplay playsinline class="w-full h-full object-cover"></video>
+              <div id="remote-placeholder" class="text-xs text-slate-500 text-center p-4">Waiting for Peer to Join...</div>
+              <div id="remote-label" class="hidden absolute bottom-2 left-2 bg-slate-900/85 px-2.5 py-1 rounded-lg text-xs text-white">Peer</div>
+            </div>
+          </div>
+
+          <!-- Bottom Toolbar with Screen Share & Emoji floating triggers -->
+          <div class="p-3 bg-slate-950 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
+            <!-- Floating Emoji Reactions Trigger Bar -->
+            <div class="flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-xl">
+              <span class="text-[11px] text-slate-400 mr-1">React:</span>
+              <button onclick="sendFloatingReaction('❤️')" class="text-base hover:scale-125 transition p-1">❤️</button>
+              <button onclick="sendFloatingReaction('👏')" class="text-base hover:scale-125 transition p-1">👏</button>
+              <button onclick="sendFloatingReaction('🎉')" class="text-base hover:scale-125 transition p-1">🎉</button>
+              <button onclick="sendFloatingReaction('🔥')" class="text-base hover:scale-125 transition p-1">🔥</button>
+              <button onclick="sendFloatingReaction('🚀')" class="text-base hover:scale-125 transition p-1">🚀</button>
+              <button onclick="sendFloatingReaction('👍')" class="text-base hover:scale-125 transition p-1">👍</button>
+              <button onclick="sendFloatingReaction('😂')" class="text-base hover:scale-125 transition p-1">😂</button>
+            </div>
+
+            <!-- Audio/Video, Background & Screen Share Controls -->
+            <div class="flex items-center gap-2">
+              <select id="select-bg-effect" class="bg-slate-800 hover:bg-slate-750 text-indigo-300 border border-slate-700 text-xs rounded-xl px-2.5 py-2 font-semibold cursor-pointer">
+                <option value="none">✨ Background: Off</option>
+                <option value="blur">✨ Portrait Blur</option>
+                <option value="blur-heavy">✨ Heavy Privacy Blur</option>
+                <option value="office">🏢 Executive Office</option>
+                <option value="cyberpunk">🌆 Neon Studio</option>
+              </select>
+              <button id="btn-toggle-mic" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold">Mute</button>
+              <button id="btn-toggle-cam" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold">Camera</button>
+              <button id="btn-share-screen" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1">
+                <span>🖥️ Share Screen</span>
+              </button>
+              <button id="btn-leave-call" class="px-3 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-semibold">End Call</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Chat Box -->
+        <div class="flex flex-col bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+          <div class="p-3 bg-slate-950 border-b border-slate-800 text-xs font-bold text-white flex justify-between items-center">
+            <span>Room Chat</span>
+            <span class="text-[10px] text-slate-500">Live sync</span>
+          </div>
+
+          <!-- Messages -->
+          <div id="chat-messages" class="flex-1 p-3 space-y-2 overflow-y-auto text-xs min-h-0"></div>
+
+          <!-- Quick Emojis Bar -->
+          <div class="px-3 py-1 bg-slate-950/60 border-t border-slate-800 flex gap-1 text-sm overflow-x-auto">
+            <button onclick="insertEmoji('👍')" class="hover:scale-125 transition">👍</button>
+            <button onclick="insertEmoji('❤️')" class="hover:scale-125 transition">❤️</button>
+            <button onclick="insertEmoji('👏')" class="hover:scale-125 transition">👏</button>
+            <button onclick="insertEmoji('🎉')" class="hover:scale-125 transition">🎉</button>
+            <button onclick="insertEmoji('🔥')" class="hover:scale-125 transition">🔥</button>
+            <button onclick="insertEmoji('💡')" class="hover:scale-125 transition">💡</button>
+            <button onclick="insertEmoji('🤝')" class="hover:scale-125 transition">🤝</button>
+          </div>
+
+          <!-- Chat Form -->
+          <form id="chat-form" class="p-3 bg-slate-950 border-t border-slate-800 flex gap-2">
+            <input id="chat-input" placeholder="Type message..." autocomplete="off" class="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white" />
+            <button type="submit" class="px-3.5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold">Send</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- JAVASCRIPT -->
+  <script>
+    let currentUser = null, currentRoom = null, localStream = null, peerConnection = null, broadcastChannel = null;
+    let isScreenSharing = false, isMicMuted = false, isCamOff = false;
+    const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+    const $ = id => document.getElementById(id);
+    const viewLanding = $('view-landing'), viewDashboard = $('view-dashboard'), viewRoom = $('view-room');
+
+    function switchView(v) {
+      viewLanding.classList.toggle('hidden', v !== 'landing');
+      viewDashboard.classList.toggle('hidden', v !== 'dashboard');
+      viewRoom.classList.toggle('hidden', v !== 'room');
+    }
+
+    $('btn-google-login').onclick = () => {
+      currentUser = { id: 'admin_' + Math.random().toString(36).substr(2,7), name: 'Alex Rivera', role: 'admin', photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100' };
+      $('user-header-pill').classList.remove('hidden');
+      $('user-header-pill').classList.add('flex');
+      $('user-avatar').src = currentUser.photoURL;
+      $('user-name').textContent = currentUser.name;
+      $('dash-user-name').textContent = 'Welcome, ' + currentUser.name;
+      switchView('dashboard');
+    };
+
+    $('btn-landing-guest-join').onclick = () => {
+      const code = $('landing-room-code').value.trim().toUpperCase();
+      if (!code) return alert('Enter room code');
+      currentUser = { id: 'guest_' + Math.random().toString(36).substr(2,7), name: $('landing-guest-name').value || 'Guest', role: 'guest' };
+      joinRoom(code);
+    };
+
+    $('btn-dash-create-room').onclick = () => {
+      const code = 'SR-' + Math.floor(1000 + Math.random() * 9000);
+      currentUser.role = 'admin';
+      joinRoom(code);
+    };
+
+    $('btn-dash-join-room').onclick = () => {
+      const code = $('dash-join-code-input').value.trim().toUpperCase();
+      if (code) joinRoom(code);
+    };
+
+    async function joinRoom(code) {
+      currentRoom = { code, id: 'room_' + code };
+      $('room-code-display').textContent = code;
+      $('role-badge').textContent = currentUser.role === 'admin' ? 'Host (Admin)' : 'Guest';
+      $('btn-admin-end-room').classList.toggle('hidden', currentUser.role !== 'admin');
+      $('local-label-name').textContent = currentUser.name + ' (You)';
+      switchView('room');
+
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      } catch {
+        const c = document.createElement('canvas'); c.width = 640; c.height = 480;
+        const ctx = c.getContext('2d');
+        setInterval(() => { ctx.fillStyle = '#0f172a'; ctx.fillRect(0,0,640,480); ctx.fillStyle = '#6366f1'; ctx.font = '24px sans-serif'; ctx.fillText(currentUser.name, 260, 240); }, 100);
+        localStream = c.captureStream(30);
+      }
+
+      // Canvas-based Virtual Background & Blur Processor
+      let bgEffect = 'none';
+      const bgCanvas = document.createElement('canvas');
+      bgCanvas.width = 640;
+      bgCanvas.height = 480;
+      const bgCtx = bgCanvas.getContext('2d');
+      const readerVideo = document.createElement('video');
+      readerVideo.autoplay = true; readerVideo.muted = true; readerVideo.playsInline = true;
+      readerVideo.srcObject = localStream;
+      readerVideo.play().catch(()=>{});
+
+      function renderBgLoop() {
+        if (!currentRoom) return;
+        const w = bgCanvas.width, h = bgCanvas.height;
+        if (bgEffect === 'none') {
+          bgCtx.filter = 'none';
+          bgCtx.drawImage(readerVideo, 0, 0, w, h);
+        } else if (bgEffect === 'blur' || bgEffect === 'blur-heavy') {
+          bgCtx.filter = bgEffect === 'blur' ? 'blur(12px)' : 'blur(24px)';
+          bgCtx.drawImage(readerVideo, 0, 0, w, h);
+          bgCtx.save();
+          bgCtx.beginPath();
+          bgCtx.ellipse(w/2, h/2+10, w*0.32, h*0.44, 0, 0, Math.PI*2);
+          bgCtx.clip();
+          bgCtx.filter = 'none';
+          bgCtx.drawImage(readerVideo, 0, 0, w, h);
+          bgCtx.restore();
+        } else if (bgEffect === 'office') {
+          bgCtx.fillStyle = '#1e293b'; bgCtx.fillRect(0,0,w,h);
+          bgCtx.fillStyle = '#0f172a'; bgCtx.fillRect(30, 40, w*0.3, h*0.7);
+          bgCtx.save();
+          bgCtx.beginPath();
+          bgCtx.ellipse(w/2, h/2+15, w*0.33, h*0.45, 0, 0, Math.PI*2);
+          bgCtx.clip();
+          bgCtx.drawImage(readerVideo, 0, 0, w, h);
+          bgCtx.restore();
+        } else if (bgEffect === 'cyberpunk') {
+          const grad = bgCtx.createLinearGradient(0,0,w,h);
+          grad.addColorStop(0, '#2e1065'); grad.addColorStop(1, '#090514');
+          bgCtx.fillStyle = grad; bgCtx.fillRect(0,0,w,h);
+          bgCtx.save();
+          bgCtx.beginPath();
+          bgCtx.ellipse(w/2, h/2+15, w*0.33, h*0.45, 0, 0, Math.PI*2);
+          bgCtx.clip();
+          bgCtx.drawImage(readerVideo, 0, 0, w, h);
+          bgCtx.restore();
+        }
+        requestAnimationFrame(renderBgLoop);
+      }
+      requestAnimationFrame(renderBgLoop);
+
+      const processedStream = bgCanvas.captureStream(30);
+      localStream.getAudioTracks().forEach(t => processedStream.addTrack(t));
+
+      $('local-video').srcObject = processedStream;
+      $('select-bg-effect').onchange = (e) => {
+        bgEffect = e.target.value;
+      };
+
+      // Broadcast signaling & WebRTC PeerConnection
+      broadcastChannel = new BroadcastChannel('syncroom_' + currentRoom.id);
+      peerConnection = new RTCPeerConnection(rtcConfig);
+      processedStream.getTracks().forEach(t => peerConnection.addTrack(t, processedStream));
+
+      peerConnection.ontrack = e => {
+        $('remote-placeholder').classList.add('hidden');
+        $('remote-label').classList.remove('hidden');
+        $('remote-video').srcObject = e.streams[0];
+      };
+
+      peerConnection.onicecandidate = e => {
+        if (e.candidate) broadcastChannel.postMessage({ type: 'candidate', candidate: e.candidate, from: currentUser.id });
+      };
+
+      broadcastChannel.onmessage = async e => {
+        const d = e.data;
+        if (!d || d.from === currentUser.id) return;
+        if (d.type === 'peer_joined' && currentUser.role === 'admin') {
+          const offer = await peerConnection.createOffer();
+          await peerConnection.setLocalDescription(offer);
+          broadcastChannel.postMessage({ type: 'offer', sdp: offer, from: currentUser.id });
+        } else if (d.type === 'offer') {
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(d.sdp));
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          broadcastChannel.postMessage({ type: 'answer', sdp: answer, from: currentUser.id });
+        } else if (d.type === 'answer') {
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(d.sdp));
+        } else if (d.type === 'candidate') {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(d.candidate));
+        } else if (d.type === 'reaction') {
+          displayFloatingEmoji(d.emoji, d.sender);
+        } else if (d.type === 'chat') {
+          appendChatMessage(d.msg);
+        } else if (d.type === 'ended') {
+          alert('Room ended by host.');
+          location.reload();
+        }
+      };
+
+      broadcastChannel.postMessage({ type: 'peer_joined', from: currentUser.id });
+    }
+
+    // Screen Share Toggle
+    $('btn-share-screen').onclick = async () => {
+      if (!isScreenSharing) {
+        try {
+          const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+          const screenTrack = screenStream.getVideoTracks()[0];
+          if (peerConnection) {
+            const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) sender.replaceTrack(screenTrack);
+          }
+          $('local-video').srcObject = screenStream;
+          $('local-screen-badge').classList.remove('hidden');
+          isScreenSharing = true;
+          $('btn-share-screen').innerHTML = '<span>🛑 Stop Sharing</span>';
+
+          screenTrack.onended = () => {
+            if (localStream) {
+              $('local-video').srcObject = localStream;
+              const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+              if (sender) sender.replaceTrack(localStream.getVideoTracks()[0]);
+            }
+            $('local-screen-badge').classList.add('hidden');
+            $('btn-share-screen').innerHTML = '<span>🖥️ Share Screen</span>';
+            isScreenSharing = false;
+          };
+        } catch (err) {
+          console.warn('Screen share failed:', err);
+        }
+      } else {
+        if (localStream) {
+          $('local-video').srcObject = localStream;
+          const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+          if (sender) sender.replaceTrack(localStream.getVideoTracks()[0]);
+        }
+        $('local-screen-badge').classList.add('hidden');
+        $('btn-share-screen').innerHTML = '<span>🖥️ Share Screen</span>';
+        isScreenSharing = false;
+      }
+    };
+
+    // Mic & Camera Toggles
+    $('btn-toggle-mic').onclick = () => {
+      if (!localStream) return;
+      isMicMuted = !isMicMuted;
+      localStream.getAudioTracks()[0].enabled = !isMicMuted;
+      $('btn-toggle-mic').textContent = isMicMuted ? 'Unmute' : 'Mute';
+    };
+
+    $('btn-toggle-cam').onclick = () => {
+      if (!localStream) return;
+      isCamOff = !isCamOff;
+      localStream.getVideoTracks()[0].enabled = !isCamOff;
+      $('local-video').classList.toggle('hidden', isCamOff);
+      $('local-avatar-fallback').classList.toggle('hidden', !isCamOff);
+    };
+
+    // Floating Reactions
+    function sendFloatingReaction(emoji) {
+      displayFloatingEmoji(emoji, currentUser.name);
+      if (broadcastChannel) {
+        broadcastChannel.postMessage({ type: 'reaction', emoji, sender: currentUser.name, from: currentUser.id });
+      }
+    }
+
+    function displayFloatingEmoji(emoji, sender) {
+      const el = document.createElement('div');
+      el.className = 'floating-bubble flex flex-col items-center';
+      el.style.left = (15 + Math.random() * 70) + '%';
+      el.style.bottom = '40px';
+      el.innerHTML = `<span class="text-3xl">${emoji}</span><span class="text-[9px] bg-slate-900/80 px-2 py-0.5 rounded-full border border-slate-700">${sender}</span>`;
+      $('emoji-stage').appendChild(el);
+      setTimeout(() => el.remove(), 2800);
+    }
+
+    // Chat Helpers
+    function insertEmoji(em) {
+      $('chat-input').value += em;
+      $('chat-input').focus();
+    }
+
+    $('chat-form').onsubmit = e => {
+      e.preventDefault();
+      const text = $('chat-input').value.trim();
+      if (!text) return;
+      const msg = { sender: currentUser.name, text, isMe: true };
+      appendChatMessage(msg);
+      broadcastChannel.postMessage({ type: 'chat', msg: { ...msg, isMe: false }, from: currentUser.id });
+      $('chat-input').value = '';
+    };
+
+    function appendChatMessage(msg) {
+      const el = document.createElement('div');
+      el.className = `p-2 rounded-xl text-xs max-w-[80%] ${msg.isMe ? 'ml-auto bg-indigo-600 text-white' : 'mr-auto bg-slate-800 text-slate-200'}`;
+      el.innerHTML = `<span class="font-bold opacity-80">${msg.sender}:</span> ${msg.text}`;
+      $('chat-messages').appendChild(el);
+      $('chat-messages').scrollTop = $('chat-messages').scrollHeight;
+    }
+
+    $('btn-open-ai-notes').onclick = () => {
+      alert('AI Copilot Note:\n- Meeting Code: ' + currentRoom.code + '\n- Participants: ' + currentUser.name + '\n- Discussion in progress.\nUse full full-stack view for live Gemini 3.8 Flash summary generation!');
+    };
+
+    $('btn-copy-link').onclick = () => {
+      navigator.clipboard.writeText(location.origin + location.pathname + '?room=' + currentRoom.code);
+      alert('Room link copied!');
+    };
+
+    $('btn-leave-room').onclick = $('btn-leave-call').onclick = () => location.reload();
+  </script>
+</body>
+</html>
