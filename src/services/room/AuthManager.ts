@@ -8,8 +8,12 @@ const SESSION_KEY_USER = 'syncroom_session_user';
 export class AuthManager extends FirebaseBase {
   async signInWithGoogle(): Promise<UserProfile> {
     if (!this.auth || !this.db) {
+      await this.ensureConfigured();
+    }
+
+    if (!this.auth || !this.db) {
       throw new Error(
-        'Firebase is not configured. Configure Firebase Authentication before signing in.'
+        'Firebase is not configured. Please ensure Firebase environment variables (VITE_FIREBASE_API_KEY, etc.) are set in your environment.'
       );
     }
 

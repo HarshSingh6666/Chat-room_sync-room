@@ -46,5 +46,6 @@ export interface FirebaseCustomConfig {
   storageBucket?: string;
   messagingSenderId?: string;
   appId: string;
+  measurementId?: string;
   firestoreDatabaseId?: string;
 }

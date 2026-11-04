@@ -26,6 +26,7 @@ export default function App() {
   useEffect(() => {
     const initializeApp = async () => {
       try {
+        await roomManager.ensureConfigured();
         const savedUser = roomManager.getLocalUser();
 
         if (savedUser) {
@@ -91,8 +92,9 @@ export default function App() {
           window.history.replaceState({}, '', window.location.pathname);
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Google sign in error:', err);
+      alert(err instanceof Error ? err.message : 'Google sign in failed');
     }
   };
 
