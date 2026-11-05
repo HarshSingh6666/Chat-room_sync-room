@@ -112,6 +112,16 @@ export class RoomCoreManager extends AuthManager {
 
           return data.room;
         }
+      } else if (res.status === 410) {
+        return {
+          id: cleanId,
+          code: normalized,
+          adminId: '',
+          adminName: 'Host',
+          createdAt: Date.now(),
+          status: 'ended',
+          participants: {},
+        };
       }
     } catch {
       // ignore
@@ -253,11 +263,34 @@ export class RoomCoreManager extends AuthManager {
     if (room) {
       if (room.status === 'ended') {
         throw new Error(
-          'This meeting has already been ended by the Host.'
+          'This room code and link have expired because the host closed the meeting.'
         );
       }
 
       room.participants = room.participants || {};
+
+      // Deduplicate same-name guests: if a guest rejoins with the same name (e.g. after accidental back/disconnect),
+      // clean up any previous stale participant entry with that same name
+      if (user.role !== 'admin') {
+        const cleanName = (user.name || '').trim().toLowerCase();
+        for (const existingId of Object.keys(room.participants)) {
+          const p = room.participants[existingId];
+          if (
+            p &&
+            existingId !== user.id &&
+            p.role !== 'admin' &&
+            p.name.trim().toLowerCase() === cleanName
+          ) {
+            delete room.participants[existingId];
+            fetch(`/api/rooms/${roomId}/leave`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ userId: existingId }),
+            }).catch(() => {});
+          }
+        }
+      }
+
       room.participants[user.id] = participant;
 
       try {

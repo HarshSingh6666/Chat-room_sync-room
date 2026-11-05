@@ -14,7 +14,7 @@ import {
 
 interface DashboardProps {
   user: UserProfile;
-  onCreateRoom: () => Promise<RoomData>;
+  onCreateRoom: () => void | Promise<any>;
   onJoinRoom: (code: string) => void;
 }
 

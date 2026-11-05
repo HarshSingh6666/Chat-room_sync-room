@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { AlertCircle } from 'lucide-react';
 import {
@@ -9,7 +8,7 @@ import { roomManager } from './services/roomManager';
 import { Navbar } from './components/Navbar';
 import { LandingAuth } from './components/LandingAuth';
 import { Dashboard } from './components/Dashboard';
-import { GuestJoinModal } from './components/GuestJoinModal';
+import { PreJoinModal, PreJoinSettings } from './components/PreJoinModal';
 import { RoomView } from './components/RoomView';
 import { ExportHtmlModal } from './components/ExportHtmlModal';
 
@@ -17,12 +16,23 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [currentRoom, setCurrentRoom] = useState<RoomData | null>(null);
   const [urlRoomCode, setUrlRoomCode] = useState<string | null>(null);
-  const [showGuestModal, setShowGuestModal] = useState<boolean>(false);
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
   const [isInitializing, setIsInitializing] = useState<boolean>(true);
   const [meetingEndedNotice, setMeetingEndedNotice] = useState<string | null>(null);
 
-  // Restore the existing meeting after browser refresh
+  // Pre-Join Modal state (asks every user whether Camera and Mic are ON or OFF)
+  const [preJoinState, setPreJoinState] = useState<{
+    isOpen: boolean;
+    roomCode: string;
+    isHost: boolean;
+  } | null>(null);
+
+  const [mediaPreferences, setMediaPreferences] = useState<{
+    isCameraOff: boolean;
+    isMicMuted: boolean;
+  }>({ isCameraOff: false, isMicMuted: false });
+
+  // Restore the existing meeting or verify link after page load
   useEffect(() => {
     const initializeApp = async () => {
       try {
@@ -40,25 +50,31 @@ export default function App() {
           const code = roomParam.trim().toUpperCase();
           setUrlRoomCode(code);
 
-          if (savedUser) {
-            try {
-              await handleJoinExistingRoom(code, savedUser);
-            } catch (err) {
+          try {
+            const checkRoom = await roomManager.findRoomByCode(code);
+            if (!checkRoom || checkRoom.status === 'ended') {
               setMeetingEndedNotice(
-                err instanceof Error
-                  ? err.message
-                  : 'Unable to restore the meeting.'
+                'This room code and link have expired because the meeting was ended by the host.'
               );
-
               setUrlRoomCode(null);
-              window.history.replaceState(
-                {},
-                '',
-                window.location.pathname
-              );
+              window.history.replaceState({}, '', window.location.pathname);
+              return;
             }
-          } else {
-            setShowGuestModal(true);
+
+            // Prompt user for Camera & Mic settings before entering
+            setPreJoinState({
+              isOpen: true,
+              roomCode: code,
+              isHost: checkRoom.adminId === savedUser?.id,
+            });
+          } catch (err: any) {
+            setMeetingEndedNotice(
+              err instanceof Error
+                ? err.message
+                : 'This room code and link have expired.'
+            );
+            setUrlRoomCode(null);
+            window.history.replaceState({}, '', window.location.pathname);
           }
         }
       } catch (err) {
@@ -77,20 +93,14 @@ export default function App() {
   const handleGoogleLogin = async () => {
     try {
       const user = await roomManager.signInWithGoogle();
-
       setCurrentUser(user);
-      setShowGuestModal(false);
 
       if (urlRoomCode) {
-        try {
-          await handleJoinExistingRoom(urlRoomCode, user);
-        } catch (err) {
-          setMeetingEndedNotice(
-            err instanceof Error ? err.message : 'Unable to join the meeting.'
-          );
-          setUrlRoomCode(null);
-          window.history.replaceState({}, '', window.location.pathname);
-        }
+        setPreJoinState({
+          isOpen: true,
+          roomCode: urlRoomCode,
+          isHost: false,
+        });
       }
     } catch (err: any) {
       console.error('Google sign in error:', err);
@@ -98,37 +108,27 @@ export default function App() {
     }
   };
 
-  // Guest Login
-  const handleGuestJoin = async (
-    guestName: string,
-    targetCode?: string
-  ) => {
-    const code = targetCode || urlRoomCode;
-
-    if (!code) return;
-
-    const guestUser = roomManager.joinAsGuest(guestName);
-
-    setCurrentUser(guestUser);
-    setShowGuestModal(false);
-
-    try {
-      await handleJoinExistingRoom(code, guestUser);
-    } catch (err) {
-      setMeetingEndedNotice(
-        err instanceof Error ? err.message : 'Unable to join the meeting.'
-      );
-
-      setUrlRoomCode(null);
-      window.history.replaceState({}, '', window.location.pathname);
-    }
+  // Open PreJoin dialog for Host creating a room
+  const handlePromptCreateRoom = async (): Promise<RoomData> => {
+    return new Promise((resolve, reject) => {
+      setPreJoinState({
+        isOpen: true,
+        roomCode: 'New Room',
+        isHost: true,
+      });
+    });
   };
 
-  // Create Room
-  const handleCreateRoom = async (): Promise<RoomData> => {
+  // Create Room as Host
+  const executeCreateRoom = async (settings: PreJoinSettings): Promise<RoomData> => {
     if (!currentUser) {
       throw new Error('User not authenticated');
     }
+
+    setMediaPreferences({
+      isCameraOff: settings.isCameraOff,
+      isMicMuted: settings.isMicMuted,
+    });
 
     const adminUser = {
       ...currentUser,
@@ -142,71 +142,72 @@ export default function App() {
 
     setCurrentRoom(room);
     setUrlRoomCode(room.code);
+    setPreJoinState(null);
 
     const newUrl = `${window.location.pathname}?room=${room.code}`;
-
     window.history.replaceState({}, '', newUrl);
 
     return room;
   };
 
-  // Join Existing Room
-  async function handleJoinExistingRoom(
-    code: string,
-    userToJoin?: UserProfile
-  ) {
-    const user = userToJoin || currentUser;
+  // Join Existing Room after PreJoin configuration
+  async function handleConfirmJoinRoom(settings: PreJoinSettings) {
+    const code = preJoinState?.roomCode || urlRoomCode;
+    if (!code) return;
 
-    if (!user) {
-      throw new Error('Please login before joining the room.');
+    setMediaPreferences({
+      isCameraOff: settings.isCameraOff,
+      isMicMuted: settings.isMicMuted,
+    });
+
+    let userToUse = currentUser;
+    if (!userToUse || userToUse.isAnonymous) {
+      userToUse = roomManager.joinAsGuest(settings.name);
+      setCurrentUser(userToUse);
     }
 
-    const normalizedCode = code.trim().toUpperCase();
+    try {
+      const normalizedCode = code.trim().toUpperCase();
 
-    // Find actual room
-    const existingRoom = await roomManager.findRoomByCode(normalizedCode);
+      // Find room & check expiration
+      const existingRoom = await roomManager.findRoomByCode(normalizedCode);
 
-    if (!existingRoom) {
-      throw new Error('Room not found. Please check the room code.');
+      if (!existingRoom || existingRoom.status === 'ended') {
+        throw new Error(
+          'This room code and link have expired because the meeting was closed by the host.'
+        );
+      }
+
+      // Join existing room (server and client clean up any previous stale participant with same name)
+      const joinedRoom = await roomManager.joinRoom(
+        existingRoom.id,
+        userToUse,
+        existingRoom
+      );
+
+      if (!joinedRoom || joinedRoom.status === 'ended') {
+        throw new Error(
+          'This room code and link have expired.'
+        );
+      }
+
+      setCurrentUser(userToUse);
+      setCurrentRoom(joinedRoom);
+      setPreJoinState(null);
+      setMeetingEndedNotice(null);
+
+      const newUrl = `${window.location.pathname}?room=${normalizedCode}`;
+      window.history.replaceState({}, '', newUrl);
+    } catch (err: any) {
+      setPreJoinState(null);
+      setMeetingEndedNotice(
+        err instanceof Error
+          ? err.message
+          : 'This room code and link have expired.'
+      );
+      setUrlRoomCode(null);
+      window.history.replaceState({}, '', window.location.pathname);
     }
-
-    if (existingRoom.status === 'ended') {
-      throw new Error('This meeting has already been ended by the Host.');
-    }
-
-    // Join existing room
-    const joinedRoom = await roomManager.joinRoom(
-      existingRoom.id,
-      user,
-      existingRoom
-    );
-
-    if (!joinedRoom || joinedRoom.status === 'ended') {
-      throw new Error('Unable to join this meeting.');
-    }
-
-    joinedRoom.participants = joinedRoom.participants || {};
-
-    if (!joinedRoom.participants[user.id]) {
-      joinedRoom.participants[user.id] = {
-        id: user.id,
-        name: user.name,
-        role: user.role === 'admin' ? 'admin' : 'guest',
-        isMuted: false,
-        isCameraOff: false,
-        joinedAt: Date.now(),
-        photoURL: user.photoURL,
-      };
-    }
-
-    setCurrentUser(user);
-    setCurrentRoom(joinedRoom);
-    setShowGuestModal(false);
-    setMeetingEndedNotice(null);
-
-    const newUrl = `${window.location.pathname}?room=${normalizedCode}`;
-
-    window.history.replaceState({}, '', newUrl);
   }
 
   // Sign Out
@@ -216,11 +217,12 @@ export default function App() {
     setCurrentUser(null);
     setCurrentRoom(null);
     setUrlRoomCode(null);
+    setPreJoinState(null);
 
     window.history.replaceState({}, '', window.location.pathname);
   };
 
-  // Leave Room
+  // Leave Room (Guest leaves; Host ends room)
   const handleLeaveRoom = async () => {
     if (currentRoom && currentUser) {
       const isRoomAdmin =
@@ -240,7 +242,7 @@ export default function App() {
     window.history.replaceState({}, '', window.location.pathname);
   };
 
-  // End Room
+  // End Room (Host ends room -> code and link expire)
   const handleEndRoom = (reason?: string) => {
     setCurrentRoom(null);
     setUrlRoomCode(null);
@@ -249,7 +251,7 @@ export default function App() {
 
     setMeetingEndedNotice(
       reason ||
-        'Meeting ended by the Host (Admin). All participants were disconnected.'
+        'Meeting ended by the Host. This room code and invite link have expired.'
     );
   };
 
@@ -266,68 +268,78 @@ export default function App() {
       {meetingEndedNotice && !currentRoom && (
         <div className="bg-rose-500/15 border-b border-rose-500/30 text-rose-200 px-4 py-3 text-sm flex items-center justify-between shadow-md shrink-0">
           <div className="flex items-center gap-2.5 max-w-5xl mx-auto w-full">
-
             <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-
             <span className="font-medium text-xs sm:text-sm">
               {meetingEndedNotice}
             </span>
-
             <button
               onClick={() => setMeetingEndedNotice(null)}
               className="ml-auto text-xs bg-rose-500/20 hover:bg-rose-500/40 text-rose-200 px-2.5 py-1 rounded-lg transition"
             >
               Dismiss
             </button>
-
           </div>
         </div>
       )}
 
       <main className="flex-1 flex flex-col min-h-0">
-
         {isInitializing ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
           </div>
-
         ) : currentRoom && currentUser ? (
           <RoomView
             room={currentRoom}
             currentUser={currentUser}
+            initialMicMuted={mediaPreferences.isMicMuted}
+            initialCameraOff={mediaPreferences.isCameraOff}
             onLeaveRoom={handleLeaveRoom}
             onEndRoom={handleEndRoom}
           />
-
         ) : currentUser && !currentUser.isAnonymous && !urlRoomCode ? (
           <Dashboard
             user={currentUser}
-            onCreateRoom={handleCreateRoom}
+            onCreateRoom={handlePromptCreateRoom}
             onJoinRoom={(code) => {
-              handleJoinExistingRoom(code).catch((err) => {
-                setMeetingEndedNotice(
-                  err instanceof Error
-                    ? err.message
-                    : 'Unable to join the room.'
-                );
+              setPreJoinState({
+                isOpen: true,
+                roomCode: code.trim().toUpperCase(),
+                isHost: false,
               });
             }}
           />
-
         ) : (
           <LandingAuth
             onGoogleLogin={handleGoogleLogin}
-            onGuestJoin={(name, code) => handleGuestJoin(name, code)}
+            onGuestJoin={(name, code) => {
+              setPreJoinState({
+                isOpen: true,
+                roomCode: code.trim().toUpperCase(),
+                isHost: false,
+              });
+            }}
             initialRoomCode={urlRoomCode || ''}
           />
         )}
-
       </main>
 
-      {showGuestModal && urlRoomCode && !currentRoom && (
-        <GuestJoinModal
-          roomCode={urlRoomCode}
-          onJoinAsGuest={(name) => handleGuestJoin(name)}
+      {/* Pre-Join Dialog: Prompts every user for Camera and Mic settings before entering */}
+      {preJoinState && preJoinState.isOpen && (
+        <PreJoinModal
+          isOpen={preJoinState.isOpen}
+          roomCode={preJoinState.roomCode}
+          isHost={preJoinState.isHost}
+          currentUser={currentUser}
+          onJoin={(settings) => {
+            if (preJoinState.isHost) {
+              executeCreateRoom(settings).catch((err) => {
+                alert(err instanceof Error ? err.message : 'Error creating room');
+              });
+            } else {
+              handleConfirmJoinRoom(settings);
+            }
+          }}
+          onClose={() => setPreJoinState(null)}
           onSwitchToGoogleLogin={handleGoogleLogin}
         />
       )}
@@ -336,7 +348,6 @@ export default function App() {
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
       />
-
     </div>
   );
 }

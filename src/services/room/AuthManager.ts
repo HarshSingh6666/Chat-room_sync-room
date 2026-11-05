@@ -42,9 +42,27 @@ export class AuthManager extends FirebaseBase {
   }
 
   joinAsGuest(guestName: string): UserProfile {
+    const cleanName = guestName.trim() || 'Guest';
+    let guestId: string | null = null;
+    try {
+      const existingUserStr = sessionStorage.getItem(SESSION_KEY_USER);
+      if (existingUserStr) {
+        const existing = JSON.parse(existingUserStr);
+        if (existing?.isAnonymous && existing.id) {
+          guestId = existing.id;
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    if (!guestId) {
+      guestId = 'guest_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+    }
+
     const user: UserProfile = {
-      id: 'guest_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-      name: guestName.trim() || 'Guest',
+      id: guestId,
+      name: cleanName,
       email: '',
       isAnonymous: true,
       role: 'guest',

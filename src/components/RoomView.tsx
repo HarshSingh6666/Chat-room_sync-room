@@ -29,13 +29,17 @@ import { ParticipantsDrawer } from './room/ParticipantsDrawer';
 interface RoomViewProps {
   room: RoomData;
   currentUser: UserProfile;
+  initialMicMuted?: boolean;
+  initialCameraOff?: boolean;
   onLeaveRoom: () => void;
-  onEndRoom: () => void;
+  onEndRoom: (reason?: string) => void;
 }
 
 export const RoomView: React.FC<RoomViewProps> = ({
   room: initialRoom,
   currentUser,
+  initialMicMuted = false,
+  initialCameraOff = false,
   onLeaveRoom,
   onEndRoom,
 }) => {
@@ -83,8 +87,8 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
   // Media & WebRTC state
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [isMicMuted, setIsMicMuted] = useState(false);
-  const [isCameraOff, setIsCameraOff] = useState(false);
+  const [isMicMuted, setIsMicMuted] = useState(initialMicMuted);
+  const [isCameraOff, setIsCameraOff] = useState(initialCameraOff);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
 
   const isAdmin =
@@ -152,45 +156,77 @@ export const RoomView: React.FC<RoomViewProps> = ({
       let hasRealVideo = false;
       let hasRealAudio = false;
 
-      // 1. Try requesting BOTH camera and microphone together
-      try {
-        const streamBoth = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true,
-        });
-        videoTrack = streamBoth.getVideoTracks()[0] || null;
-        audioTrack = streamBoth.getAudioTracks()[0] || null;
-        hasRealVideo = !!videoTrack;
-        hasRealAudio = !!audioTrack;
-      } catch (errBoth) {
-        console.warn(
-          'Could not acquire both video and audio together, trying independently...',
-          errBoth
-        );
+      // 1. Check if user requested camera to start OFF in pre-join check:
+      if (!initialCameraOff) {
+        if (!initialMicMuted) {
+          try {
+            const streamBoth = await navigator.mediaDevices.getUserMedia({
+              video: true,
+              audio: true,
+            });
+            videoTrack = streamBoth.getVideoTracks()[0] || null;
+            audioTrack = streamBoth.getAudioTracks()[0] || null;
+            hasRealVideo = !!videoTrack;
+            hasRealAudio = !!audioTrack;
+          } catch (errBoth) {
+            console.warn(
+              'Could not acquire both video and audio together, trying independently...',
+              errBoth
+            );
 
-        // 2. Try requesting CAMERA alone
-        try {
-          const streamVideo = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: false,
-          });
-          videoTrack = streamVideo.getVideoTracks()[0] || null;
-          hasRealVideo = !!videoTrack;
-        } catch (errVid) {
-          console.warn('Camera permission denied or unavailable:', errVid);
-        }
+            try {
+              const streamVideo = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: false,
+              });
+              videoTrack = streamVideo.getVideoTracks()[0] || null;
+              hasRealVideo = !!videoTrack;
+            } catch (errVid) {
+              console.warn('Camera permission denied or unavailable:', errVid);
+            }
 
-        // 3. Try requesting MICROPHONE alone
-        try {
-          const streamAudio = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-            video: false,
-          });
-          audioTrack = streamAudio.getAudioTracks()[0] || null;
-          hasRealAudio = !!audioTrack;
-        } catch (errAud) {
-          console.warn('Microphone permission denied or unavailable:', errAud);
+            try {
+              const streamAudio = await navigator.mediaDevices.getUserMedia({
+                audio: true,
+                video: false,
+              });
+              audioTrack = streamAudio.getAudioTracks()[0] || null;
+              hasRealAudio = !!audioTrack;
+            } catch (errAud) {
+              console.warn('Microphone permission denied or unavailable:', errAud);
+            }
+          }
+        } else {
+          // Camera ON, but Mic OFF
+          try {
+            const streamVideo = await navigator.mediaDevices.getUserMedia({
+              video: true,
+              audio: false,
+            });
+            videoTrack = streamVideo.getVideoTracks()[0] || null;
+            hasRealVideo = !!videoTrack;
+          } catch (errVid) {
+            console.warn('Camera permission denied or unavailable:', errVid);
+          }
         }
+      } else {
+        // User chose Camera OFF
+        if (!initialMicMuted) {
+          try {
+            const streamAudio = await navigator.mediaDevices.getUserMedia({
+              audio: true,
+              video: false,
+            });
+            audioTrack = streamAudio.getAudioTracks()[0] || null;
+            hasRealAudio = !!audioTrack;
+          } catch (errAud) {
+            console.warn('Microphone permission denied or unavailable:', errAud);
+          }
+        }
+      }
+
+      if (audioTrack && initialMicMuted) {
+        audioTrack.enabled = false;
       }
 
       hasRealVideoRef.current = hasRealVideo;
@@ -275,6 +311,44 @@ export const RoomView: React.FC<RoomViewProps> = ({
       }
     }
 
+    // Capture mobile / browser Back button so user exits cleanly
+    window.history.pushState({ inMeeting: true }, '', window.location.href);
+
+    const handlePopState = () => {
+      if (isAdmin) {
+        roomManager.endRoom(room.id);
+        onEndRoom('Meeting ended by the Host. Room code has expired.');
+      } else {
+        roomManager.leaveRoom(room.id, currentUser.id);
+        onLeaveRoom();
+      }
+    };
+
+    const handleLeaveSync = () => {
+      try {
+        const payload = JSON.stringify({ userId: currentUser.id });
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(
+            `/api/rooms/${room.id}/leave`,
+            new Blob([payload], { type: 'application/json' })
+          );
+        } else {
+          fetch(`/api/rooms/${room.id}/leave`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+            keepalive: true,
+          }).catch(() => {});
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('beforeunload', handleLeaveSync);
+    window.addEventListener('pagehide', handleLeaveSync);
+
     initMedia();
 
     const unsubRoom = roomManager.subscribeToRoom(
@@ -334,6 +408,12 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
     return () => {
       active = false;
+
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('beforeunload', handleLeaveSync);
+      window.removeEventListener('pagehide', handleLeaveSync);
+
+      handleLeaveSync();
 
       unsubRoom();
       unsubChat();
@@ -688,11 +768,11 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
     if (
       window.confirm(
-        'Are you sure you want to end this room for all participants?'
+        'Ending this room will expire the room code and link. All participants will be disconnected. Continue?'
       )
     ) {
       await roomManager.endRoom(room.id);
-      onEndRoom();
+      onEndRoom('Meeting ended by the Host. Room code and invite link have expired.');
     }
   };
 
@@ -701,11 +781,11 @@ export const RoomView: React.FC<RoomViewProps> = ({
     if (isAdmin) {
       if (
         window.confirm(
-          'Are you sure you want to end this meeting for all participants?'
+          'Leaving will end the meeting and expire the room code for all participants. Continue?'
         )
       ) {
         await roomManager.endRoom(room.id);
-        onEndRoom();
+        onEndRoom('Meeting ended by the Host. Room code and invite link have expired.');
       }
     } else {
       if (

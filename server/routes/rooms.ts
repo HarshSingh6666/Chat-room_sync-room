@@ -43,28 +43,27 @@ roomsRouter.post('/:id/join', (req: Request, res: Response) => {
 
   let room = findRoom(roomId);
 
-  // Retains the original guest auto-create behavior.
-  if (!room) {
-    const code = roomId.replace('room_', '').toUpperCase();
-
-    room = {
-      id: roomId,
-      code:
-        code.length === 6
-          ? `${code.slice(0, 3)}-${code.slice(3)}`
-          : code,
-      adminId: '',
-      adminName: 'Host',
-      createdAt: Date.now(),
-      status: 'active',
-      participants: {},
-    };
+  if (!room || room.status === 'ended') {
+    return res.status(410).json({
+      error: 'This room code and link have expired or the meeting was closed by the host.',
+    });
   }
 
-  if (room.status === 'ended') {
-    return res.status(410).json({
-      error: 'Room ended',
-    });
+  // Deduplicate same-name guests: if a guest rejoins with the same name (e.g. after accidental back/disconnect),
+  // remove the old stale participant ID to prevent duplicate participants in the room!
+  if (user.role !== 'admin') {
+    const trimmedNewName = (user.name || '').trim().toLowerCase();
+    for (const existingId of Object.keys(room.participants)) {
+      const existing = room.participants[existingId];
+      if (
+        existing &&
+        existing.id !== user.id &&
+        existing.role !== 'admin' &&
+        existing.name.trim().toLowerCase() === trimmedNewName
+      ) {
+        delete room.participants[existingId];
+      }
+    }
   }
 
   const participant: ServerParticipant = {
@@ -95,7 +94,7 @@ roomsRouter.post('/:id/leave', (req: Request, res: Response) => {
   if (room && userId) {
     delete room.participants[userId];
 
-    // If the person leaving is the admin, automatically end the room for everyone!
+    // If the person leaving is the admin/host, automatically end and expire the room for everyone!
     if (room.adminId === userId) {
       room.status = 'ended';
       room.participants = {};
@@ -151,6 +150,13 @@ roomsRouter.get('/:codeOrId', (req: Request, res: Response) => {
   if (!room) {
     return res.status(404).json({
       error: 'Room not found',
+    });
+  }
+
+  if (room.status === 'ended') {
+    return res.status(410).json({
+      error: 'This room code and link have expired.',
+      status: 'ended',
     });
   }
 
