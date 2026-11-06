@@ -315,6 +315,15 @@ export const RoomView: React.FC<RoomViewProps> = ({
     window.history.pushState({ inMeeting: true }, '', window.location.href);
 
     const handlePopState = () => {
+      try {
+        sessionStorage.removeItem('syncroom_in_meeting');
+        sessionStorage.removeItem('syncroom_active_room_code');
+        sessionStorage.removeItem('syncroom_active_room_id');
+        sessionStorage.removeItem('syncroom_media_prefs');
+      } catch {
+        // ignore
+      }
+
       if (isAdmin) {
         roomManager.endRoom(room.id);
         onEndRoom('Meeting ended by the Host. Room code has expired.');
@@ -324,30 +333,20 @@ export const RoomView: React.FC<RoomViewProps> = ({
       }
     };
 
-    const handleLeaveSync = () => {
-      try {
-        const payload = JSON.stringify({ userId: currentUser.id });
-        if (navigator.sendBeacon) {
-          navigator.sendBeacon(
-            `/api/rooms/${room.id}/leave`,
-            new Blob([payload], { type: 'application/json' })
-          );
-        } else {
-          fetch(`/api/rooms/${room.id}/leave`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: payload,
-            keepalive: true,
-          }).catch(() => {});
-        }
-      } catch {
-        // ignore
-      }
-    };
-
     window.addEventListener('popstate', handlePopState);
-    window.addEventListener('beforeunload', handleLeaveSync);
-    window.addEventListener('pagehide', handleLeaveSync);
+
+    // Save active meeting state so browser refresh does not send user back to lobby
+    try {
+      sessionStorage.setItem('syncroom_in_meeting', 'true');
+      sessionStorage.setItem('syncroom_active_room_code', room.code);
+      sessionStorage.setItem('syncroom_active_room_id', room.id);
+      sessionStorage.setItem(
+        'syncroom_media_prefs',
+        JSON.stringify({ isCameraOff, isMicMuted })
+      );
+    } catch {
+      // ignore
+    }
 
     initMedia();
 
@@ -410,10 +409,6 @@ export const RoomView: React.FC<RoomViewProps> = ({
       active = false;
 
       window.removeEventListener('popstate', handlePopState);
-      window.removeEventListener('beforeunload', handleLeaveSync);
-      window.removeEventListener('pagehide', handleLeaveSync);
-
-      handleLeaveSync();
 
       unsubRoom();
       unsubChat();
@@ -771,6 +766,14 @@ export const RoomView: React.FC<RoomViewProps> = ({
         'Ending this room will expire the room code and link. All participants will be disconnected. Continue?'
       )
     ) {
+      try {
+        sessionStorage.removeItem('syncroom_in_meeting');
+        sessionStorage.removeItem('syncroom_active_room_code');
+        sessionStorage.removeItem('syncroom_active_room_id');
+        sessionStorage.removeItem('syncroom_media_prefs');
+      } catch {
+        // ignore
+      }
       await roomManager.endRoom(room.id);
       onEndRoom('Meeting ended by the Host. Room code and invite link have expired.');
     }
@@ -778,6 +781,15 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
   // Leave or end meeting
   const handleExitCall = async () => {
+    try {
+      sessionStorage.removeItem('syncroom_in_meeting');
+      sessionStorage.removeItem('syncroom_active_room_code');
+      sessionStorage.removeItem('syncroom_active_room_id');
+      sessionStorage.removeItem('syncroom_media_prefs');
+    } catch {
+      // ignore
+    }
+
     if (isAdmin) {
       if (
         window.confirm(

@@ -20,7 +20,7 @@ export default function App() {
   const [isInitializing, setIsInitializing] = useState<boolean>(true);
   const [meetingEndedNotice, setMeetingEndedNotice] = useState<string | null>(null);
 
-  // Pre-Join Modal state (asks every user whether Camera and Mic are ON or OFF)
+  // Pre-Join Modal state (asks user for Camera and Mic settings before entering)
   const [preJoinState, setPreJoinState] = useState<{
     isOpen: boolean;
     roomCode: string;
@@ -32,7 +32,7 @@ export default function App() {
     isMicMuted: boolean;
   }>({ isCameraOff: false, isMicMuted: false });
 
-  // Restore the existing meeting or verify link after page load
+  // Restore the existing meeting or verify link after page load/refresh
   useEffect(() => {
     const initializeApp = async () => {
       try {
@@ -61,7 +61,37 @@ export default function App() {
               return;
             }
 
-            // Prompt user for Camera & Mic settings before entering
+            // Check if user was ALREADY inside this meeting before page refresh:
+            const wasInMeeting =
+              sessionStorage.getItem('syncroom_in_meeting') === 'true';
+            const savedMeetingCode =
+              sessionStorage.getItem('syncroom_active_room_code');
+
+            if (wasInMeeting && savedMeetingCode === code && savedUser) {
+              // User refreshed while in meeting!
+              // DO NOT show lobby (PreJoinModal) again!
+              // DO NOT change the room code!
+              try {
+                const savedPrefs = sessionStorage.getItem('syncroom_media_prefs');
+                if (savedPrefs) {
+                  setMediaPreferences(JSON.parse(savedPrefs));
+                }
+              } catch {
+                // ignore
+              }
+
+              // Rejoin directly into the existing room
+              const joined = await roomManager.joinRoom(
+                checkRoom.id,
+                savedUser,
+                checkRoom
+              );
+              setCurrentRoom(joined || checkRoom);
+              setMeetingEndedNotice(null);
+              return;
+            }
+
+            // Fresh entry: Prompt user for Camera & Mic settings before entering
             setPreJoinState({
               isOpen: true,
               roomCode: code,
@@ -108,7 +138,7 @@ export default function App() {
     }
   };
 
-  // Open PreJoin dialog for Host creating a room
+  // Open PreJoin dialog for Host creating a brand new room
   const handlePromptCreateRoom = async (): Promise<RoomData> => {
     return new Promise((resolve, reject) => {
       setPreJoinState({
@@ -139,6 +169,22 @@ export default function App() {
     roomManager.saveLocalUser(adminUser);
 
     const room = await roomManager.createRoom(adminUser);
+
+    // Save active meeting state in session
+    try {
+      sessionStorage.setItem('syncroom_in_meeting', 'true');
+      sessionStorage.setItem('syncroom_active_room_code', room.code);
+      sessionStorage.setItem('syncroom_active_room_id', room.id);
+      sessionStorage.setItem(
+        'syncroom_media_prefs',
+        JSON.stringify({
+          isCameraOff: settings.isCameraOff,
+          isMicMuted: settings.isMicMuted,
+        })
+      );
+    } catch {
+      // ignore
+    }
 
     setCurrentRoom(room);
     setUrlRoomCode(room.code);
@@ -178,6 +224,13 @@ export default function App() {
         );
       }
 
+      // If current user is host of this existing room, keep their admin role
+      if (existingRoom.adminId === userToUse.id) {
+        userToUse = { ...userToUse, role: 'admin' };
+        setCurrentUser(userToUse);
+        roomManager.saveLocalUser(userToUse);
+      }
+
       // Join existing room (server and client clean up any previous stale participant with same name)
       const joinedRoom = await roomManager.joinRoom(
         existingRoom.id,
@@ -189,6 +242,22 @@ export default function App() {
         throw new Error(
           'This room code and link have expired.'
         );
+      }
+
+      // Save active meeting state in session
+      try {
+        sessionStorage.setItem('syncroom_in_meeting', 'true');
+        sessionStorage.setItem('syncroom_active_room_code', joinedRoom.code);
+        sessionStorage.setItem('syncroom_active_room_id', joinedRoom.id);
+        sessionStorage.setItem(
+          'syncroom_media_prefs',
+          JSON.stringify({
+            isCameraOff: settings.isCameraOff,
+            isMicMuted: settings.isMicMuted,
+          })
+        );
+      } catch {
+        // ignore
       }
 
       setCurrentUser(userToUse);
@@ -214,6 +283,15 @@ export default function App() {
   const handleSignOut = async () => {
     await roomManager.signOut();
 
+    try {
+      sessionStorage.removeItem('syncroom_in_meeting');
+      sessionStorage.removeItem('syncroom_active_room_code');
+      sessionStorage.removeItem('syncroom_active_room_id');
+      sessionStorage.removeItem('syncroom_media_prefs');
+    } catch {
+      // ignore
+    }
+
     setCurrentUser(null);
     setCurrentRoom(null);
     setUrlRoomCode(null);
@@ -224,6 +302,15 @@ export default function App() {
 
   // Leave Room (Guest leaves; Host ends room)
   const handleLeaveRoom = async () => {
+    try {
+      sessionStorage.removeItem('syncroom_in_meeting');
+      sessionStorage.removeItem('syncroom_active_room_code');
+      sessionStorage.removeItem('syncroom_active_room_id');
+      sessionStorage.removeItem('syncroom_media_prefs');
+    } catch {
+      // ignore
+    }
+
     if (currentRoom && currentUser) {
       const isRoomAdmin =
         currentUser.role === 'admin' ||
@@ -244,6 +331,15 @@ export default function App() {
 
   // End Room (Host ends room -> code and link expire)
   const handleEndRoom = (reason?: string) => {
+    try {
+      sessionStorage.removeItem('syncroom_in_meeting');
+      sessionStorage.removeItem('syncroom_active_room_code');
+      sessionStorage.removeItem('syncroom_active_room_id');
+      sessionStorage.removeItem('syncroom_media_prefs');
+    } catch {
+      // ignore
+    }
+
     setCurrentRoom(null);
     setUrlRoomCode(null);
 
@@ -323,7 +419,7 @@ export default function App() {
         )}
       </main>
 
-      {/* Pre-Join Dialog: Prompts every user for Camera and Mic settings before entering */}
+      {/* Pre-Join Dialog: Prompts user for Camera and Mic settings before entering */}
       {preJoinState && preJoinState.isOpen && (
         <PreJoinModal
           isOpen={preJoinState.isOpen}
@@ -331,7 +427,7 @@ export default function App() {
           isHost={preJoinState.isHost}
           currentUser={currentUser}
           onJoin={(settings) => {
-            if (preJoinState.isHost) {
+            if (preJoinState.isHost && preJoinState.roomCode === 'New Room') {
               executeCreateRoom(settings).catch((err) => {
                 alert(err instanceof Error ? err.message : 'Error creating room');
               });

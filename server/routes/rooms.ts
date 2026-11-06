@@ -93,13 +93,6 @@ roomsRouter.post('/:id/leave', (req: Request, res: Response) => {
 
   if (room && userId) {
     delete room.participants[userId];
-
-    // If the person leaving is the admin/host, automatically end and expire the room for everyone!
-    if (room.adminId === userId) {
-      room.status = 'ended';
-      room.participants = {};
-    }
-
     saveRoom(room);
   }
 

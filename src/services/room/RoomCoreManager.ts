@@ -167,11 +167,14 @@ export class RoomCoreManager extends AuthManager {
     user: UserProfile,
     fallbackRoomData?: RoomData
   ): Promise<RoomData | null> {
+    const isRoomAdmin =
+      user.role === 'admin' ||
+      (fallbackRoomData && fallbackRoomData.adminId === user.id);
 
     const participant: Participant = {
       id: user.id,
       name: user.name,
-      role: user.role === 'admin' ? 'admin' : 'guest',
+      role: isRoomAdmin ? 'admin' : 'guest',
       isMuted: false,
       isCameraOff: false,
       joinedAt: Date.now(),
